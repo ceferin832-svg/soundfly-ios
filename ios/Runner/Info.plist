@@ -58,7 +58,7 @@
 	
 	<!-- iOS Version Requirements -->
 	<key>MinimumOSVersion</key>
-	<string>12.0</string>
+	<string>14.0</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	
