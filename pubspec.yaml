@@ -16,16 +16,6 @@ dependencies:
   # Connectivity check
   connectivity_plus: ^5.0.2
   
-  # Google Mobile Ads (AdMob)
-  google_mobile_ads: ^4.0.0
-  
-  # Firebase for push notifications
-  firebase_core: ^2.24.2
-  firebase_messaging: ^14.7.10
-  
-  # Local notifications
-  flutter_local_notifications: ^16.3.0
-  
   # Shared preferences for storing settings
   shared_preferences: ^2.2.2
   
@@ -34,12 +24,6 @@ dependencies:
   
   # Cupertino icons for iOS styling
   cupertino_icons: ^1.0.6
-  
-  # Path provider for file downloads
-  path_provider: ^2.1.2
-  
-  # Permission handler
-  permission_handler: ^11.2.0
 
 dev_dependencies:
   flutter_test:
