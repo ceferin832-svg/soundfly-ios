@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'config/app_config.dart';
 import 'config/app_theme.dart';
 import 'screens/splash_screen.dart';
+import 'services/admob_service.dart';
+import 'services/push_notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +20,16 @@ void main() async {
   // Set fullscreen mode if enabled
   if (AppConfig.fullscreenEnabled) {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+  
+  // Initialize AdMob if enabled
+  if (AppConfig.admobEnabled) {
+    await AdMobService.initialize();
+  }
+  
+  // Initialize push notifications if enabled
+  if (AppConfig.pushNotificationsEnabled) {
+    await PushNotificationService.initialize();
   }
   
   runApp(const SoundflyApp());

@@ -6,6 +6,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
+import '../services/admob_service.dart';
 import 'no_internet_screen.dart';
 
 /// Home Screen with WebView
@@ -56,6 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
               _isLoading = false;
             });
             _pageLoadCount++;
+            _showInterstitialAd();
           },
           onWebResourceError: (WebResourceError error) {
             setState(() {
@@ -122,6 +124,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openExternalUrl(String url) async {
     // Use url_launcher to open external URLs
     // For now, we'll just prevent navigation
+  }
+
+  void _showInterstitialAd() {
+    if (AppConfig.admobEnabled &&
+        _pageLoadCount > 0 &&
+        _pageLoadCount % AppConfig.interstitialInterval == 0) {
+      AdMobService.showInterstitialAd();
+    }
   }
 
   void _showSnackBar(String message, Color backgroundColor) {
