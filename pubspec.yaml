@@ -19,9 +19,9 @@ dependencies:
   # Google Mobile Ads (AdMob)
   google_mobile_ads: ^3.1.0
   
-  # Firebase for push notifications - using 15.1.3+ which has modular headers fix
-  firebase_core: ^2.32.0
-  firebase_messaging: ^14.9.4
+  # Firebase for push notifications - using 15.x which has modular headers fix built-in
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.5
   
   # Local notifications
   flutter_local_notifications: ^16.3.2
