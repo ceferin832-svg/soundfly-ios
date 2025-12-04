@@ -60,30 +60,10 @@ workflows:
       - name: Generate App Icons with flutter_launcher_icons
         script: |
           # Use flutter_launcher_icons to properly generate all icons
-          # This package handles CFBundleIconName correctly
           dart run flutter_launcher_icons
           
           echo "App icons generated with flutter_launcher_icons"
           ls -la ios/Runner/Assets.xcassets/AppIcon.appiconset/
-          
-          # Verify Contents.json
-          echo "Contents.json:"
-          cat ios/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json
-      
-      - name: Ensure CFBundleIconName in Info.plist
-        script: |
-          INFO_PLIST="ios/Runner/Info.plist"
-          
-          echo "Checking Info.plist for CFBundleIconName..."
-          
-          # Add CFBundleIconName if not present
-          if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST" 2>/dev/null; then
-            echo "Adding CFBundleIconName..."
-            /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$INFO_PLIST"
-          fi
-          
-          echo "CFBundleIconName value:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST"
       
       - name: Clean and install CocoaPods
         script: |
@@ -99,75 +79,26 @@ workflows:
           keychain add-certificates
           xcode-project use-profiles
       
-      - name: Build iOS with xcodebuild archive
+      - name: Build iOS IPA
         script: |
-          # First compile Flutter
-          flutter build ios --release --no-codesign
+          # Build IPA using flutter build ipa
+          # The Xcode build phase "Add CFBundleIconName" will add CFBundleIconName during the build
+          flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
           
-          # Ensure CFBundleIconName is in the built Info.plist
-          BUILT_PLIST="build/ios/iphoneos/Runner.app/Info.plist"
-          if [ -f "$BUILT_PLIST" ]; then
-            if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$BUILT_PLIST" 2>/dev/null; then
-              echo "Adding CFBundleIconName to built app..."
-              /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$BUILT_PLIST"
-            fi
-          fi
-          
-          # Build archive with xcodebuild
-          cd ios
-          xcodebuild -workspace Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -archivePath $CM_BUILD_DIR/build/ios/archive/Runner.xcarchive \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            archive
-          
-          echo "Archive created"
-          ls -la $CM_BUILD_DIR/build/ios/archive/
-      
-      - name: Export IPA from archive
-        script: |
-          # Create export options plist
-          cat > /tmp/ExportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>destination</key>
-              <string>upload</string>
-              <key>signingStyle</key>
-              <string>automatic</string>
-              <key>uploadSymbols</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
-          
-          # Export IPA
-          mkdir -p build/ios/ipa
-          xcodebuild -exportArchive \
-            -archivePath $CM_BUILD_DIR/build/ios/archive/Runner.xcarchive \
-            -exportPath $CM_BUILD_DIR/build/ios/ipa \
-            -exportOptionsPlist /tmp/ExportOptions.plist
-          
-          # Rename IPA
-          mv $CM_BUILD_DIR/build/ios/ipa/Runner.ipa $CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa 2>/dev/null || true
-          
-          echo "IPA exported:"
-          ls -la $CM_BUILD_DIR/build/ios/ipa/
+          # Verify the IPA
+          echo "Build complete. Checking IPA..."
+          ls -la build/ios/ipa/
           
           # Verify CFBundleIconName in final IPA
           echo "Verifying CFBundleIconName in IPA..."
           mkdir -p /tmp/verify_ipa
-          unzip -q $CM_BUILD_DIR/build/ios/ipa/*.ipa -d /tmp/verify_ipa
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/verify_ipa/Payload/*.app/Info.plist || echo "WARNING: CFBundleIconName missing!"
+          unzip -q build/ios/ipa/*.ipa -d /tmp/verify_ipa
+          echo "CFBundleIconName in IPA:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/verify_ipa/Payload/*.app/Info.plist || echo "NOT FOUND"
       
       - name: Upload to App Store Connect
         script: |
-          APP_FILE=$(find $CM_BUILD_DIR/build/ios/ipa -name "*.ipa" | head -1)
+          APP_FILE=$(find build/ios/ipa -name "*.ipa" | head -1)
           echo "Uploading $APP_FILE to App Store Connect..."
           app-store-connect publish \
             --path "$APP_FILE" \
@@ -176,7 +107,6 @@ workflows:
       
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/archive/*.xcarchive
       - /tmp/xcodebuild_logs/*.log
     
     publishing:
