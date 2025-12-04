@@ -104,7 +104,47 @@ workflows:
       
       - name: Build iOS Release IPA
         script: |
-          flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+          # Step 1: Build iOS without codesign first
+          flutter build ios --release --no-codesign
+          
+          # Step 2: Ensure CFBundleIconName is in the built app's Info.plist
+          APP_PATH="build/ios/iphoneos/Runner.app"
+          APP_INFO_PLIST="$APP_PATH/Info.plist"
+          
+          echo "Checking $APP_INFO_PLIST for CFBundleIconName..."
+          
+          if [ -f "$APP_INFO_PLIST" ]; then
+            if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO_PLIST" 2>/dev/null; then
+              echo "CFBundleIconName not found, adding it..."
+              /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$APP_INFO_PLIST"
+            else
+              echo "CFBundleIconName already present:"
+              /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_INFO_PLIST"
+            fi
+          fi
+          
+          # Step 3: Build IPA using xcode-project from Codemagic CLI
+          cd ios
+          xcode-project build-ipa \
+            --workspace Runner.xcworkspace \
+            --scheme Runner \
+            --archive-flags="-destination 'generic/platform=iOS'"
+          
+          # Move IPA to expected location
+          mkdir -p $CM_BUILD_DIR/build/ios/ipa
+          mv build/ios/ipa/*.ipa $CM_BUILD_DIR/build/ios/ipa/ 2>/dev/null || true
+          
+          # Final verification
+          IPA_FILE=$(find $CM_BUILD_DIR/build/ios/ipa -name "*.ipa" | head -1)
+          if [ -n "$IPA_FILE" ]; then
+            echo "IPA built: $IPA_FILE"
+            mkdir -p /tmp/ipa_verify
+            unzip -q "$IPA_FILE" -d /tmp/ipa_verify
+            echo "Verifying CFBundleIconName in final IPA..."
+            /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/ipa_verify/Payload/*.app/Info.plist || echo "WARNING: CFBundleIconName still missing"
+          fi
+          
+          ls -la $CM_BUILD_DIR/build/ios/ipa/
       
       - name: Upload to App Store Connect
         script: |
