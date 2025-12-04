@@ -29,7 +29,7 @@ class AppTheme {
   static const Color lightBlack = Color(0xFF23232C);
   
   /// Background colors
-  static const Color splashBackground = red;
+  static const Color splashBackground = black;
   static const Color scaffoldBackground = white;
   static const Color darkScaffoldBackground = lightBlack;
   

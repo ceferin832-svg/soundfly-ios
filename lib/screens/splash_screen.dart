@@ -5,7 +5,7 @@ import 'home_screen.dart';
 
 /// Splash Screen
 /// 
-/// Displays the app logo on a red background similar to the Android app.
+/// Displays the app logo on a black background.
 /// Automatically navigates to the home screen after the configured duration.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -123,54 +123,16 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   }
 
   Widget _buildLogo() {
-    return Container(
-      width: 150,
-      height: 150,
-      decoration: BoxDecoration(
-        color: AppTheme.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: const Center(
-        child: Icon(
-          Icons.music_note_rounded,
-          size: 80,
-          color: AppTheme.red,
-        ),
-      ),
+    return Image.asset(
+      'assets/images/logo.png',
+      width: 200,
+      height: 200,
+      fit: BoxFit.contain,
     );
   }
 
   Widget _buildBrandingText() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          AppConfig.appName.toUpperCase(),
-          style: const TextStyle(
-            color: AppTheme.white,
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 4,
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Music Streaming',
-          style: TextStyle(
-            color: AppTheme.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w300,
-            letterSpacing: 2,
-          ),
-        ),
-      ],
-    );
+    // Sin texto, solo el logo
+    return const SizedBox.shrink();
   }
 }
