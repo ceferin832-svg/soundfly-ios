@@ -102,9 +102,54 @@ workflows:
           keychain add-certificates
           xcode-project use-profiles
       
+      - name: Add CFBundleIconName to Info.plist
+        script: |
+          # Add CFBundleIconName if not present
+          PLIST_PATH="ios/Runner/Info.plist"
+          if ! /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$PLIST_PATH" 2>/dev/null; then
+            /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$PLIST_PATH"
+            echo "Added CFBundleIconName to Info.plist"
+          else
+            echo "CFBundleIconName already exists"
+          fi
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$PLIST_PATH"
+      
       - name: Build iOS Release IPA
         script: |
           flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+      
+      - name: Fix CFBundleIconName in IPA
+        script: |
+          # Unzip IPA, add CFBundleIconName, re-zip
+          APP_FILE=$(find build/ios/ipa -name "*.ipa" | head -1)
+          echo "Fixing CFBundleIconName in $APP_FILE"
+          
+          TEMP_DIR="/tmp/ipa_fix"
+          rm -rf "$TEMP_DIR"
+          mkdir -p "$TEMP_DIR"
+          
+          # Unzip IPA
+          unzip -q "$APP_FILE" -d "$TEMP_DIR"
+          
+          # Find Info.plist in the app bundle
+          APP_BUNDLE=$(find "$TEMP_DIR/Payload" -name "*.app" -type d | head -1)
+          PLIST_PATH="$APP_BUNDLE/Info.plist"
+          
+          echo "Modifying $PLIST_PATH"
+          
+          # Add CFBundleIconName
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$PLIST_PATH" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$PLIST_PATH"
+          
+          # Verify
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$PLIST_PATH"
+          
+          # Re-create IPA
+          cd "$TEMP_DIR"
+          rm "$APP_FILE"
+          zip -r -q "$APP_FILE" Payload
+          
+          echo "IPA fixed successfully"
       
       - name: Upload to App Store Connect
         script: |
