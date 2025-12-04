@@ -116,10 +116,56 @@ workflows:
           echo "Archive created"
           ls -la $CM_BUILD_DIR/build/ios/archive/
           
-          # Verify CFBundleIconName is in the archive
-          ARCHIVE_INFO="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app/Info.plist"
-          echo "Checking CFBundleIconName in archive:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$ARCHIVE_INFO" || echo "NOT FOUND IN ARCHIVE"
+          # Add CFBundleIconName to the archived app
+          ARCHIVE_APP="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          ARCHIVE_INFO="$ARCHIVE_APP/Info.plist"
+          
+          echo "Adding CFBundleIconName to archive..."
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$ARCHIVE_INFO" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$ARCHIVE_INFO"
+          
+          echo "Verifying CFBundleIconName in archive:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$ARCHIVE_INFO"
+          
+          # Re-sign the app after modification
+          echo "Re-signing the archived app..."
+          
+          # Find the signing identity
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Using identity: $IDENTITY"
+          
+          # Find provisioning profile
+          PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -1)
+          echo "Using profile: $PROFILE_PATH"
+          
+          # Extract entitlements
+          security cms -D -i "$PROFILE_PATH" > /tmp/profile.plist
+          /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.plist > /tmp/entitlements.plist
+          
+          # Copy provisioning profile to app
+          cp "$PROFILE_PATH" "$ARCHIVE_APP/embedded.mobileprovision"
+          
+          # Re-sign frameworks first
+          if [ -d "$ARCHIVE_APP/Frameworks" ]; then
+            for framework in "$ARCHIVE_APP/Frameworks"/*.framework; do
+              if [ -d "$framework" ]; then
+                echo "Signing framework: $framework"
+                codesign --force --sign "$IDENTITY" "$framework"
+              fi
+            done
+            for dylib in "$ARCHIVE_APP/Frameworks"/*.dylib; do
+              if [ -f "$dylib" ]; then
+                echo "Signing dylib: $dylib"
+                codesign --force --sign "$IDENTITY" "$dylib"
+              fi
+            done
+          fi
+          
+          # Re-sign the app
+          codesign --force --sign "$IDENTITY" --entitlements /tmp/entitlements.plist "$ARCHIVE_APP"
+          
+          # Verify
+          codesign --verify --deep --strict "$ARCHIVE_APP" && echo "Signature valid" || echo "Signature INVALID"
       
       - name: Export IPA from Archive
         script: |
