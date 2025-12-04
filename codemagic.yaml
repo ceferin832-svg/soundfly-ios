@@ -74,6 +74,15 @@ workflows:
       - name: Build iOS Release IPA
         script: |
           flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+      
+      - name: Upload to App Store Connect
+        script: |
+          APP_FILE=$(find build/ios/ipa -name "*.ipa" | head -1)
+          echo "Uploading $APP_FILE to App Store Connect..."
+          app-store-connect publish \
+            --path "$APP_FILE" \
+            --testflight \
+            --beta-group "Internal Testers"
     
     artifacts:
       - build/ios/ipa/*.ipa
