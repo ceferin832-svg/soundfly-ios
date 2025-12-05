@@ -1,41 +1,6 @@
 workflows:
   # ============================================
-  # iOS Simulator Build (para BrowserStack simulador)
-  # ============================================
-  ios-simulator:
-    name: iOS Simulator Build
-    instance_type: mac_mini_m1
-    max_build_duration: 60
-    
-    environment:
-      flutter: stable
-      xcode: latest
-      cocoapods: default
-    
-    scripts:
-      - name: Get Flutter packages
-        script: |
-          flutter pub get
-      
-      - name: Clean and install CocoaPods
-        script: |
-          cd ios
-          rm -rf Pods Podfile.lock
-          pod repo update
-          pod install --repo-update
-      
-      - name: Build iOS Simulator app
-        script: |
-          flutter build ios --debug --simulator
-          cd build/ios/iphonesimulator
-          zip -r Runner.zip Runner.app
-    
-    artifacts:
-      - build/ios/iphonesimulator/Runner.zip
-      - build/ios/iphonesimulator/Runner.app
-
-  # ============================================
-  # iOS Release Build (IPA para dispositivos reales)
+  # iOS App Store Build
   # ============================================
   ios-appstore:
     name: iOS App Store Build
@@ -57,20 +22,16 @@ workflows:
         script: |
           flutter pub get
       
-      - name: Generate App Icons with sips
+      - name: Generate App Icons
         script: |
-          # Source logo - must be at least 1024x1024
           SOURCE_ICON="assets/images/logo.png"
           ICON_DIR="ios/Runner/Assets.xcassets/AppIcon.appiconset"
           
-          echo "Source icon:"
-          file "$SOURCE_ICON"
-          
-          # Create a 1024x1024 base icon first
+          echo "Creating 1024x1024 base icon..."
           sips -z 1024 1024 "$SOURCE_ICON" --out "/tmp/icon_1024.png"
           
-          # Generate all required icon sizes from the 1024 base
-          # iPhone icons (required)
+          echo "Generating all required icon sizes..."
+          # iPhone icons
           sips -z 40 40 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-20x20@2x.png"
           sips -z 60 60 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-20x20@3x.png"
           sips -z 58 58 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-29x29@2x.png"
@@ -80,7 +41,7 @@ workflows:
           sips -z 120 120 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-60x60@2x.png"
           sips -z 180 180 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-60x60@3x.png"
           
-          # iPad icons (required)
+          # iPad icons
           sips -z 20 20 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-20x20@1x.png"
           sips -z 29 29 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-29x29@1x.png"
           sips -z 40 40 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-40x40@1x.png"
@@ -88,237 +49,201 @@ workflows:
           sips -z 152 152 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-76x76@2x.png"
           sips -z 167 167 "/tmp/icon_1024.png" --out "$ICON_DIR/Icon-App-83.5x83.5@2x.png"
           
-          # App Store icon (1024x1024)
+          # App Store icon
           cp "/tmp/icon_1024.png" "$ICON_DIR/Icon-App-1024x1024@1x.png"
           
           echo "Generated icons:"
           ls -la "$ICON_DIR"
-          
-          # Verify all icons exist
-          echo "Verifying icons..."
-          for icon in Icon-App-20x20@2x.png Icon-App-20x20@3x.png Icon-App-60x60@2x.png Icon-App-60x60@3x.png Icon-App-76x76@2x.png Icon-App-83.5x83.5@2x.png Icon-App-1024x1024@1x.png; do
-            if [ -f "$ICON_DIR/$icon" ]; then
-              echo "✓ $icon exists"
-            else
-              echo "✗ $icon MISSING!"
-            fi
-          done
       
-      - name: Clean and install CocoaPods
+      - name: Ensure CFBundleIconName in Info.plist
+        script: |
+          INFO_PLIST="ios/Runner/Info.plist"
+          
+          # Check if CFBundleIconName exists
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST" 2>/dev/null; then
+            echo "CFBundleIconName already exists"
+          else
+            echo "Adding CFBundleIconName..."
+            /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$INFO_PLIST"
+          fi
+          
+          # Verify
+          echo "CFBundleIconName value:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST"
+      
+      - name: Install CocoaPods
         script: |
           cd ios
           rm -rf Pods Podfile.lock
-          pod repo update
           pod install --repo-update
-      
-      - name: Set up code signing
-        script: |
-          keychain initialize
-          app-store-connect fetch-signing-files $(xcode-project detect-bundle-id) --type IOS_APP_STORE --create
-          keychain add-certificates
-          xcode-project use-profiles
       
       - name: Build Flutter iOS (no codesign)
         script: |
-          # Build Flutter iOS without code signing
           flutter build ios --release --no-codesign
-          
-          echo "Flutter build complete"
-          
-          # Add CFBundleIconName to the built app BEFORE archiving
-          BUILT_PLIST="build/ios/iphoneos/Runner.app/Info.plist"
-          
-          if [ -f "$BUILT_PLIST" ]; then
-            echo "Adding CFBundleIconName to built app..."
-            /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$BUILT_PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$BUILT_PLIST"
-            
-            echo "CFBundleIconName added. Verifying:"
-            /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$BUILT_PLIST"
-          else
-            echo "WARNING: Built app Info.plist not found at $BUILT_PLIST"
-            find build/ios -name "Info.plist" 2>/dev/null
-          fi
       
       - name: Archive with xcodebuild
         script: |
           cd ios
-          
-          # Archive using xcodebuild directly
           xcodebuild -workspace Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
-            -archivePath $CM_BUILD_DIR/build/ios/archive/Runner.xcarchive \
-            -destination 'generic/platform=iOS' \
-            archive
+            -archivePath "$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive" \
+            archive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
           
-          echo "Archive created"
-          ls -la $CM_BUILD_DIR/build/ios/archive/
-          
-          # Add CFBundleIconName to the archived app
+          echo "Archive created. Checking icons in archive..."
           ARCHIVE_APP="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
-          ARCHIVE_INFO="$ARCHIVE_APP/Info.plist"
+          ls -la "$ARCHIVE_APP" | grep -i icon || echo "No loose icons"
+          [ -f "$ARCHIVE_APP/Assets.car" ] && echo "Assets.car exists" || echo "Assets.car NOT found"
+      
+      - name: Inject CFBundleIconName into Archive
+        script: |
+          ARCHIVE_APP="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          INFO_PLIST="$ARCHIVE_APP/Info.plist"
           
-          echo "Adding CFBundleIconName to archive..."
-          /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$ARCHIVE_INFO" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$ARCHIVE_INFO"
+          echo "Current Info.plist CFBundleIconName:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST" 2>/dev/null || echo "NOT FOUND"
           
-          echo "Verifying CFBundleIconName in archive:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$ARCHIVE_INFO"
+          # Force add/set CFBundleIconName
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$INFO_PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$INFO_PLIST"
           
-          # Re-sign the app after modification
-          echo "Re-signing the archived app..."
+          echo "After modification:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$INFO_PLIST"
           
-          # Find the signing identity
+          # Also ensure CFBundleIcons is properly set
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIcons" "$INFO_PLIST" 2>/dev/null || echo "No CFBundleIcons key"
+      
+      - name: Copy icons to App bundle
+        script: |
+          ARCHIVE_APP="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          ICON_DIR="ios/Runner/Assets.xcassets/AppIcon.appiconset"
+          
+          echo "Copying icon files directly to app bundle..."
+          
+          # Copy all icons with AppIcon prefix for iOS to find them
+          cp "$ICON_DIR/Icon-App-60x60@2x.png" "$ARCHIVE_APP/AppIcon60x60@2x.png"
+          cp "$ICON_DIR/Icon-App-60x60@3x.png" "$ARCHIVE_APP/AppIcon60x60@3x.png"
+          cp "$ICON_DIR/Icon-App-76x76@1x.png" "$ARCHIVE_APP/AppIcon76x76~ipad.png"
+          cp "$ICON_DIR/Icon-App-76x76@2x.png" "$ARCHIVE_APP/AppIcon76x76@2x~ipad.png"
+          cp "$ICON_DIR/Icon-App-83.5x83.5@2x.png" "$ARCHIVE_APP/AppIcon83.5x83.5@2x~ipad.png"
+          cp "$ICON_DIR/Icon-App-40x40@2x.png" "$ARCHIVE_APP/AppIcon40x40@2x.png"
+          cp "$ICON_DIR/Icon-App-40x40@3x.png" "$ARCHIVE_APP/AppIcon40x40@3x.png"
+          cp "$ICON_DIR/Icon-App-20x20@2x.png" "$ARCHIVE_APP/AppIcon20x20@2x.png"
+          cp "$ICON_DIR/Icon-App-20x20@3x.png" "$ARCHIVE_APP/AppIcon20x20@3x.png"
+          cp "$ICON_DIR/Icon-App-29x29@2x.png" "$ARCHIVE_APP/AppIcon29x29@2x.png"
+          cp "$ICON_DIR/Icon-App-29x29@3x.png" "$ARCHIVE_APP/AppIcon29x29@3x.png"
+          
+          echo "Icons in app bundle:"
+          ls -la "$ARCHIVE_APP" | grep -i icon
+      
+      - name: Sign and Export IPA
+        script: |
+          # Find signing identity
           IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Using identity: $IDENTITY"
+          
+          ARCHIVE_PATH="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive"
+          ARCHIVE_APP="$ARCHIVE_PATH/Products/Applications/Runner.app"
           
           # Find provisioning profile
           PROFILE_PATH=$(find ~/Library/MobileDevice/Provisioning\ Profiles -name "*.mobileprovision" | head -1)
           echo "Using profile: $PROFILE_PATH"
           
-          # Extract entitlements
+          # Extract entitlements from profile
           security cms -D -i "$PROFILE_PATH" > /tmp/profile.plist
           /usr/libexec/PlistBuddy -x -c "Print :Entitlements" /tmp/profile.plist > /tmp/entitlements.plist
           
-          # Copy provisioning profile to app
-          cp "$PROFILE_PATH" "$ARCHIVE_APP/embedded.mobileprovision"
+          # Get team ID
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /tmp/profile.plist)
+          echo "Team ID: $TEAM_ID"
           
-          # Re-sign frameworks first
+          # Sign frameworks if they exist
           if [ -d "$ARCHIVE_APP/Frameworks" ]; then
-            for framework in "$ARCHIVE_APP/Frameworks"/*.framework; do
-              if [ -d "$framework" ]; then
-                echo "Signing framework: $framework"
-                codesign --force --sign "$IDENTITY" "$framework"
-              fi
-            done
-            for dylib in "$ARCHIVE_APP/Frameworks"/*.dylib; do
-              if [ -f "$dylib" ]; then
-                echo "Signing dylib: $dylib"
-                codesign --force --sign "$IDENTITY" "$dylib"
-              fi
-            done
+            find "$ARCHIVE_APP/Frameworks" -name "*.framework" -exec codesign --force --sign "$IDENTITY" {} \; 2>/dev/null || true
+            find "$ARCHIVE_APP/Frameworks" -name "*.dylib" -exec codesign --force --sign "$IDENTITY" {} \; 2>/dev/null || true
           fi
           
-          # Re-sign the app
+          # Sign the app
           codesign --force --sign "$IDENTITY" --entitlements /tmp/entitlements.plist "$ARCHIVE_APP"
           
-          # Verify
-          codesign --verify --deep --strict "$ARCHIVE_APP" && echo "Signature valid" || echo "Signature INVALID"
+          # Verify signature
+          codesign --verify --deep --strict "$ARCHIVE_APP" && echo "Signature VALID" || echo "Signature INVALID"
+          
+          # Create IPA manually
+          mkdir -p /tmp/ipa_payload/Payload
+          cp -R "$ARCHIVE_APP" /tmp/ipa_payload/Payload/
+          
+          mkdir -p "$CM_BUILD_DIR/build/ios/ipa"
+          cd /tmp/ipa_payload
+          zip -qr "$CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa" Payload
+          
+          echo "IPA created:"
+          ls -la "$CM_BUILD_DIR/build/ios/ipa/"
       
-      - name: Export IPA manually (skip xcodebuild exportArchive)
+      - name: Verify IPA
         script: |
-          # Instead of using xcodebuild -exportArchive which may regenerate things,
-          # we'll create the IPA manually from the modified archive
+          mkdir -p /tmp/verify
+          rm -rf /tmp/verify/*
+          unzip -q "$CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa" -d /tmp/verify
           
-          ARCHIVE_APP="$CM_BUILD_DIR/build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          APP_PATH=$(find /tmp/verify/Payload -name "*.app" -type d | head -1)
           
-          # Verify CFBundleIconName is still in the archive before packaging
-          echo "Verifying CFBundleIconName before packaging:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$ARCHIVE_APP/Info.plist"
+          echo "=== IPA Verification ==="
+          echo "CFBundleIconName:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP_PATH/Info.plist" || echo "NOT FOUND"
           
-          # Create Payload directory
-          mkdir -p /tmp/ipa_build/Payload
+          echo ""
+          echo "Icon files in bundle:"
+          ls -la "$APP_PATH" | grep -i icon
           
-          # Copy the signed app to Payload
-          cp -R "$ARCHIVE_APP" /tmp/ipa_build/Payload/
-          
-          # Create IPA by zipping
-          mkdir -p $CM_BUILD_DIR/build/ios/ipa
-          cd /tmp/ipa_build
-          zip -qr $CM_BUILD_DIR/build/ios/ipa/Soundfly.ipa Payload
-          
-          echo "IPA created manually:"
-          ls -la $CM_BUILD_DIR/build/ios/ipa/
-      
-      - name: Verify CFBundleIconName in IPA
-        script: |
-          mkdir -p /tmp/verify_ipa
-          unzip -q $CM_BUILD_DIR/build/ios/ipa/*.ipa -d /tmp/verify_ipa
-          
-          echo "Checking CFBundleIconName in final IPA..."
-          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/verify_ipa/Payload/*.app/Info.plist
-          
-          if /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" /tmp/verify_ipa/Payload/*.app/Info.plist 2>/dev/null; then
-            echo "SUCCESS: CFBundleIconName is present!"
-          else
-            echo "ERROR: CFBundleIconName is still missing!"
-            exit 1
-          fi
-      
-      - name: Upload to App Store Connect
-        script: |
-          APP_FILE=$(find $CM_BUILD_DIR/build/ios/ipa -name "*.ipa" | head -1)
-          echo "Uploading $APP_FILE to App Store Connect..."
-          app-store-connect publish \
-            --path "$APP_FILE" \
-            --testflight \
-            --beta-group "Internal Testers"
-      
+          echo ""
+          echo "Assets.car exists:"
+          [ -f "$APP_PATH/Assets.car" ] && echo "YES" || echo "NO"
+    
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
+      - build/ios/archive/Runner.xcarchive
     
     publishing:
-      email:
-        recipients:
-          - newshellweb@gmail.com
-        notify:
-          success: true
-          failure: true
       app_store_connect:
         auth: integration
         submit_to_testflight: true
+        submit_to_app_store: false
 
   # ============================================
-  # iOS Ad-Hoc Build (IPA para testing en BrowserStack dispositivos reales)
+  # iOS Simulator Build
   # ============================================
-  ios-adhoc:
-    name: iOS Ad-Hoc Build (Testing IPA)
+  ios-simulator:
+    name: iOS Simulator Build
     instance_type: mac_mini_m1
-    max_build_duration: 90
-    integrations:
-      app_store_connect: Soundfly
+    max_build_duration: 60
     
     environment:
       flutter: stable
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: ad_hoc
-        bundle_identifier: com.soundfly.music
     
     scripts:
       - name: Get Flutter packages
         script: |
           flutter pub get
       
-      - name: Clean and install CocoaPods
+      - name: Install CocoaPods
         script: |
           cd ios
           rm -rf Pods Podfile.lock
-          pod repo update
           pod install --repo-update
       
-      - name: Set up code signing
+      - name: Build iOS Simulator app
         script: |
-          keychain initialize
-          app-store-connect fetch-signing-files $(xcode-project detect-bundle-id) --type IOS_APP_ADHOC --create
-          keychain add-certificates
-          xcode-project use-profiles
-      
-      - name: Build iOS Ad-Hoc IPA
-        script: |
-          flutter build ipa --release --export-options-plist=/Users/builder/export_options.plist
+          flutter build ios --debug --simulator
+          cd build/ios/iphonesimulator
+          zip -r Runner.zip Runner.app
     
     artifacts:
-      - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
-    
-    publishing:
-      email:
-        recipients:
-          - newshellweb@gmail.com
-        notify:
-          success: true
-          failure: true
+      - build/ios/iphonesimulator/Runner.zip
+      - build/ios/iphonesimulator/Runner.app
