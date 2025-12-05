@@ -1,7 +1,6 @@
 import UIKit
 import Flutter
 import AVFoundation
-import WebKit
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {
@@ -10,11 +9,6 @@ import WebKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    
-    // Register native audio player plugin
-    if let registrar = self.registrar(forPlugin: "NativeAudioPlayerPlugin") {
-      NativeAudioPlayerPlugin.register(with: registrar)
-    }
     
     // Configure AVAudioSession for background audio playback
     configureAudioSession()
@@ -31,18 +25,18 @@ import WebKit
         options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
       )
       try audioSession.setActive(true)
-      print("Audio session configured successfully for background playback")
+      print("Audio session configured for background playback")
     } catch {
-      print("Failed to configure audio session: \(error.localizedDescription)")
+      print("Failed to configure audio session: \(error)")
     }
   }
   
   override func applicationDidEnterBackground(_ application: UIApplication) {
     do {
       try AVAudioSession.sharedInstance().setActive(true)
-      print("Audio session kept active in background")
+      print("Keeping audio session active in background")
     } catch {
-      print("Failed to keep audio session active: \(error)")
+      print("Error keeping audio active: \(error)")
     }
     super.applicationDidEnterBackground(application)
   }
@@ -51,7 +45,7 @@ import WebKit
     do {
       try AVAudioSession.sharedInstance().setActive(true)
     } catch {
-      print("Failed to activate audio session: \(error)")
+      print("Error reactivating audio: \(error)")
     }
     super.applicationWillEnterForeground(application)
   }

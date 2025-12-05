@@ -372,107 +372,142 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('Injecting native audio bridge...');
+        console.log('=== Soundfly Audio Bridge v2 ===');
         
-        // Flag to track if we're using native player
-        window._usingNativePlayer = false;
-        window._currentAudioSrc = null;
+        // Store original functions
+        const originalAudioPlay = HTMLAudioElement.prototype.play;
+        const originalAudioPause = HTMLAudioElement.prototype.pause;
         
-        // Function to send commands to native player
-        function sendToNative(command, args) {
+        // Track active audio element
+        window._soundflyAudio = null;
+        window._soundflyAudioSrc = null;
+        
+        // Function to extract audio URL
+        function getAudioUrl(audio) {
+          return audio.src || audio.currentSrc || audio.getAttribute('src') || '';
+        }
+        
+        // Function to send to native
+        function sendToNative(action, url) {
+          console.log('Sending to native: ' + action + ' - ' + url);
           if (window.flutter_inappwebview) {
-            window.flutter_inappwebview.callHandler('nativeAudio', command, args);
+            window.flutter_inappwebview.callHandler('nativeAudio', action, url || '');
           }
         }
         
-        // Intercept HTMLAudioElement play
-        var originalPlay = HTMLAudioElement.prototype.play;
-        HTMLAudioElement.prototype.play = function() {
-          var audio = this;
-          var src = audio.src || audio.currentSrc;
-          
-          if (src && src.length > 0 && !src.startsWith('blob:')) {
-            console.log('Intercepted audio play: ' + src);
-            window._currentAudioSrc = src;
-            window._usingNativePlayer = true;
-            
-            // Mute the web audio and let native handle it
-            audio.muted = true;
-            audio.volume = 0;
-            
-            // Send to native player
-            sendToNative('play', src);
-            
-            // Return a resolved promise
-            return Promise.resolve();
-          }
-          
-          return originalPlay.call(this);
+        // Override Audio constructor
+        const OriginalAudio = window.Audio;
+        window.Audio = function(src) {
+          console.log('Audio constructor called with: ' + src);
+          const audio = new OriginalAudio(src);
+          setupAudioElement(audio);
+          return audio;
         };
         
-        // Intercept pause
-        var originalPause = HTMLAudioElement.prototype.pause;
-        HTMLAudioElement.prototype.pause = function() {
-          if (window._usingNativePlayer) {
-            console.log('Intercepted audio pause');
-            sendToNative('pause', null);
-          }
-          return originalPause.call(this);
-        };
-        
-        // Monitor for audio elements and intercept their events
-        function setupAudioInterception(audio) {
-          audio.setAttribute('playsinline', '');
-          audio.setAttribute('webkit-playsinline', '');
+        // Setup interception on audio element
+        function setupAudioElement(audio) {
+          console.log('Setting up audio element');
           
-          // Listen for src changes
-          var descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
-          if (descriptor && descriptor.set) {
-            var originalSetter = descriptor.set;
-            Object.defineProperty(audio, 'src', {
-              set: function(value) {
-                console.log('Audio src set to: ' + value);
-                window._currentAudioSrc = value;
-                originalSetter.call(this, value);
-              },
-              get: function() {
-                return this.getAttribute('src') || '';
+          // Override play
+          audio.play = function() {
+            const url = getAudioUrl(this);
+            console.log('Audio.play() called, URL: ' + url);
+            
+            if (url && url.length > 5 && !url.startsWith('blob:') && !url.startsWith('data:')) {
+              window._soundflyAudio = this;
+              window._soundflyAudioSrc = url;
+              
+              // Mute web audio, native will play
+              this.muted = true;
+              this.volume = 0;
+              
+              // Send to native player
+              sendToNative('play', url);
+              
+              // Call original to keep web player state in sync
+              return originalAudioPlay.call(this).catch(function(e) {
+                console.log('Web audio play error (expected): ' + e);
+                return Promise.resolve();
+              });
+            }
+            return originalAudioPlay.call(this);
+          };
+          
+          // Override pause
+          audio.pause = function() {
+            console.log('Audio.pause() called');
+            if (window._soundflyAudio === this) {
+              sendToNative('pause', '');
+            }
+            return originalAudioPause.call(this);
+          };
+          
+          // Monitor src changes
+          let currentSrc = '';
+          Object.defineProperty(audio, 'src', {
+            get: function() {
+              return currentSrc;
+            },
+            set: function(value) {
+              console.log('Audio src set: ' + value);
+              currentSrc = value;
+              this.setAttribute('src', value);
+              if (value && value.length > 5) {
+                window._soundflyAudioSrc = value;
               }
-            });
-          }
+            }
+          });
         }
         
         // Setup existing audio elements
-        document.querySelectorAll('audio').forEach(setupAudioInterception);
+        document.querySelectorAll('audio').forEach(function(audio) {
+          setupAudioElement(audio);
+        });
         
-        // Monitor for new audio elements
-        var observer = new MutationObserver(function(mutations) {
+        // Watch for new audio elements
+        const observer = new MutationObserver(function(mutations) {
           mutations.forEach(function(mutation) {
             mutation.addedNodes.forEach(function(node) {
               if (node.nodeType === 1) {
                 if (node.tagName === 'AUDIO') {
-                  setupAudioInterception(node);
+                  setupAudioElement(node);
                 }
-                var audios = node.querySelectorAll ? node.querySelectorAll('audio') : [];
-                audios.forEach(setupAudioInterception);
+                if (node.querySelectorAll) {
+                  node.querySelectorAll('audio').forEach(function(audio) {
+                    setupAudioElement(audio);
+                  });
+                }
               }
             });
           });
         });
-        observer.observe(document.body, { childList: true, subtree: true });
         
-        // Unlock AudioContext
-        var AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-          document.addEventListener('touchstart', function() {
-            var ctx = new AudioContext();
-            if (ctx.state === 'suspended') {
-              ctx.resume();
-            }
-          }, { once: true });
-        }
+        observer.observe(document.documentElement, {
+          childList: true,
+          subtree: true
+        });
         
-        console.log('Native audio bridge injected successfully');
+        // Also intercept XMLHttpRequest to catch audio file requests
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+          if (url && (url.includes('.mp3') || url.includes('.m4a') || url.includes('.wav') || url.includes('.ogg') || url.includes('/audio/') || url.includes('/stream/'))) {
+            console.log('XHR audio request detected: ' + url);
+            window._lastAudioUrl = url;
+          }
+          return originalXHROpen.apply(this, arguments);
+        };
+        
+        // Intercept fetch for audio
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options) {
+          if (url && typeof url === 'string' && (url.includes('.mp3') || url.includes('.m4a') || url.includes('.wav') || url.includes('.ogg') || url.includes('/audio/') || url.includes('/stream/'))) {
+            console.log('Fetch audio request detected: ' + url);
+            window._lastAudioUrl = url;
+          }
+          return originalFetch.apply(this, arguments);
+        };
+        
+        console.log('Audio bridge installed successfully');
       })();
     ''');
   }
