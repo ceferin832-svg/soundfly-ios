@@ -82,18 +82,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (Platform.isIOS) {
       params = WebKitWebViewControllerCreationParams(
         allowsInlineMediaPlayback: true,
-        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+        mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{}, // No user action required for any media
       );
     } else {
       params = const PlatformWebViewControllerCreationParams();
     }
 
-    _webViewController = WebViewController.fromPlatformCreationParams(params)
-      ..setJavaScriptMode(
-        AppConfig.javascriptEnabled
-            ? JavaScriptMode.unrestricted
-            : JavaScriptMode.disabled,
-      )
+    _webViewController = WebViewController.fromPlatformCreationParams(params);
+    
+    // Enable media playback in WebView
+    if (_webViewController.platform is WebKitWebViewController) {
+      final webKitController = _webViewController.platform as WebKitWebViewController;
+      webKitController.setAllowsBackForwardNavigationGestures(true);
+    }
+    
+    _webViewController
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(AppTheme.white)
       ..setUserAgent(
         'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
@@ -105,6 +109,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _isLoading = true;
               _hasError = false;
             });
+            // Activate audio session when page starts loading
+            AudioBackgroundService.activate();
           },
           onPageFinished: (String url) {
             setState(() {
@@ -140,7 +146,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ..loadRequest(Uri.parse(AppConfig.websiteUrl));
   }
 
-  /// Inject JavaScript to improve iOS WebView behavior
+  /// Inject JavaScript to improve iOS WebView behavior and enable audio
   void _injectJavaScript() {
     _webViewController.runJavaScript('''
       // Enable smooth scrolling
@@ -150,14 +156,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       // Fix viewport for proper scaling
       var viewport = document.querySelector('meta[name="viewport"]');
       if (viewport) {
-        viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        viewport.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes');
       }
       
-      // Ensure audio elements can play
+      // Force audio/video elements to allow inline playback
       document.querySelectorAll('audio, video').forEach(function(el) {
         el.setAttribute('playsinline', '');
         el.setAttribute('webkit-playsinline', '');
+        el.removeAttribute('autoplay');
       });
+      
+      // Override Audio constructor to ensure playsinline
+      (function() {
+        var OriginalAudio = window.Audio;
+        window.Audio = function(src) {
+          var audio = new OriginalAudio(src);
+          audio.setAttribute('playsinline', '');
+          audio.setAttribute('webkit-playsinline', '');
+          return audio;
+        };
+        window.Audio.prototype = OriginalAudio.prototype;
+      })();
+      
+      // Monitor for dynamically added audio elements
+      var observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+          mutation.addedNodes.forEach(function(node) {
+            if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
+              node.setAttribute('playsinline', '');
+              node.setAttribute('webkit-playsinline', '');
+            }
+            if (node.querySelectorAll) {
+              node.querySelectorAll('audio, video').forEach(function(el) {
+                el.setAttribute('playsinline', '');
+                el.setAttribute('webkit-playsinline', '');
+              });
+            }
+          });
+        });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      
+      console.log('iOS audio enhancements injected');
     ''');
   }
 

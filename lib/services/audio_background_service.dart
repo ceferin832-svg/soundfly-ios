@@ -16,13 +16,15 @@ class AudioBackgroundService {
     try {
       _audioSession = await AudioSession.instance;
       
-      // Configure for music playback
+      // Configure for music playback with mixing enabled
       await _audioSession!.configure(AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.allowAirPlay,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers |
+            AVAudioSessionCategoryOptions.allowAirPlay |
+            AVAudioSessionCategoryOptions.defaultToSpeaker,
         avAudioSessionMode: AVAudioSessionMode.defaultMode,
         avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
-        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
         androidAudioAttributes: const AndroidAudioAttributes(
           contentType: AndroidAudioContentType.music,
           usage: AndroidAudioUsage.media,
