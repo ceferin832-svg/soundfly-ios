@@ -1,6 +1,7 @@
 import UIKit
 import Flutter
 import AVFoundation
+import WebKit
 
 @UIApplicationMain
 @objc class AppDelegate: FlutterAppDelegate {
@@ -13,9 +14,6 @@ import AVFoundation
     // Configure AVAudioSession for background audio playback
     configureAudioSession()
     
-    // Firebase and push notifications are handled by Flutter plugins
-    // No native initialization needed here
-    
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
   
@@ -23,9 +21,7 @@ import AVFoundation
     do {
       let audioSession = AVAudioSession.sharedInstance()
       
-      // Set category for playback that can mix with other apps
-      // .playback allows audio to continue in background
-      // .mixWithOthers allows audio from other apps to play simultaneously if needed
+      // Set category for playback - this is the key for background audio
       try audioSession.setCategory(
         .playback,
         mode: .default,
@@ -41,14 +37,25 @@ import AVFoundation
     }
   }
   
-  // Handle audio interruptions (phone calls, etc.)
-  override func applicationWillResignActive(_ application: UIApplication) {
-    // App is about to move to background - keep audio playing
-    super.applicationWillResignActive(application)
+  // CRITICAL: Keep audio playing when app goes to background
+  override func applicationDidEnterBackground(_ application: UIApplication) {
+    // Re-activate audio session when entering background
+    do {
+      try AVAudioSession.sharedInstance().setActive(true)
+      print("Audio session kept active in background")
+    } catch {
+      print("Failed to keep audio session active: \(error)")
+    }
+    super.applicationDidEnterBackground(application)
   }
   
-  override func applicationDidBecomeActive(_ application: UIApplication) {
-    // App came back to foreground
-    super.applicationDidBecomeActive(application)
+  override func applicationWillEnterForeground(_ application: UIApplication) {
+    // Ensure audio session is active when coming back
+    do {
+      try AVAudioSession.sharedInstance().setActive(true)
+    } catch {
+      print("Failed to activate audio session: \(error)")
+    }
+    super.applicationWillEnterForeground(application)
   }
 }

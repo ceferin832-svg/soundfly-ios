@@ -42,11 +42,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Media playback settings - CRITICAL for audio
     mediaPlaybackRequiresUserGesture: false,
     allowsInlineMediaPlayback: true,
+    allowsAirPlayForMediaPlayback: true,
+    allowsPictureInPictureMediaPlayback: true,
     
     // iOS specific settings
     allowsBackForwardNavigationGestures: true,
     allowsLinkPreview: false,
     isFraudulentWebsiteWarningEnabled: false,
+    limitsNavigationsToAppBoundDomains: false,
     
     // Allow mixed content (http in https)
     mixedContentMode: MixedContentMode.MIXED_CONTENT_ALWAYS_ALLOW,
@@ -94,19 +97,54 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     
     switch (state) {
       case AppLifecycleState.paused:
-        // App went to background - keep audio playing
+        // App went to background - try to keep audio playing
         debugPrint('App paused - keeping audio session active for background playback');
         AudioBackgroundService.activate();
-        // DO NOT pause the WebView - let audio continue
+        // Inject JavaScript to try to keep audio alive
+        _keepAudioAlive();
         break;
       case AppLifecycleState.resumed:
         debugPrint('App resumed');
         AudioBackgroundService.activate();
         break;
       case AppLifecycleState.inactive:
+        // App is transitioning - activate audio session
+        AudioBackgroundService.activate();
+        break;
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
         break;
+    }
+  }
+  
+  /// Try to keep audio alive when going to background
+  Future<void> _keepAudioAlive() async {
+    if (_webViewController == null) return;
+    
+    try {
+      await _webViewController!.evaluateJavascript(source: '''
+        (function() {
+          // Find all audio elements and ensure they keep playing
+          var audios = document.querySelectorAll('audio');
+          audios.forEach(function(audio) {
+            if (!audio.paused) {
+              console.log('Keeping audio alive in background');
+              // Store reference to keep it playing
+              window._backgroundAudio = audio;
+            }
+          });
+          
+          // Also check for any AudioContext
+          if (window.AudioContext || window.webkitAudioContext) {
+            var ctx = new (window.AudioContext || window.webkitAudioContext)();
+            if (ctx.state === 'suspended') {
+              ctx.resume();
+            }
+          }
+        })();
+      ''');
+    } catch (e) {
+      debugPrint('Error keeping audio alive: $e');
     }
   }
 
