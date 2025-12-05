@@ -268,13 +268,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     callback: (args) {
                       if (args.isEmpty) return;
                       final command = args[0] as String;
+                      final url = args.length > 1 ? args[1] as String : '';
+                      
+                      debugPrint('Native Audio Command: $command, URL: $url');
                       
                       switch (command) {
                         case 'play':
-                          if (args.length > 1) {
-                            final url = args[1] as String;
+                          if (url.isNotEmpty) {
                             NativeAudioPlayer.play(url);
-                            debugPrint('Native audio play: $url');
                           }
                           break;
                         case 'pause':
@@ -284,11 +285,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           NativeAudioPlayer.resume();
                           break;
                         case 'stop':
+                        case 'ended':
                           NativeAudioPlayer.stop();
                           break;
                         case 'seek':
-                          if (args.length > 1) {
-                            final position = (args[1] as num).toDouble();
+                          if (url.isNotEmpty) {
+                            final position = double.tryParse(url) ?? 0;
                             NativeAudioPlayer.seek(position);
                           }
                           break;
@@ -372,164 +374,201 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('=== Soundfly Audio Bridge v3 ===');
+        console.log('=== Soundfly Audio Bridge v4 - iOS Background Audio ===');
         
-        // Track state
-        window._sfNativeAudioActive = false;
-        window._sfCurrentSrc = null;
-        window._sfAudioElement = null;
+        // State tracking
+        window._sfBridge = {
+          active: false,
+          currentSrc: null,
+          audioElement: null,
+          baseUrl: window.location.origin
+        };
         
-        // Send command to native Flutter
-        function sendToNative(action, url) {
-          console.log('[SF-Bridge] Sending: ' + action + ' url=' + (url || 'none'));
+        // Send message to Flutter native player
+        function sendToFlutter(action, url) {
+          var fullUrl = url;
+          
+          // Convert relative URLs to absolute
+          if (url && !url.startsWith('http') && !url.startsWith('blob:') && !url.startsWith('data:')) {
+            fullUrl = window._sfBridge.baseUrl + '/' + url.replace(/^\\//, '');
+          }
+          
+          console.log('[SF-Native] ' + action + ': ' + fullUrl);
+          
           if (window.flutter_inappwebview) {
-            window.flutter_inappwebview.callHandler('nativeAudio', action, url || '');
+            window.flutter_inappwebview.callHandler('nativeAudio', action, fullUrl || '');
           }
         }
         
-        // Check if URL is a valid audio URL
-        function isAudioUrl(url) {
+        // Check if this is a real audio URL (not blob, not data, has audio extension or storage path)
+        function isValidAudioUrl(url) {
           if (!url || url.length < 5) return false;
           if (url.startsWith('blob:') || url.startsWith('data:')) return false;
-          // Check for common audio extensions or storage paths
+          
+          // Check for common patterns
           return url.includes('.mp3') || 
                  url.includes('.m4a') || 
                  url.includes('.wav') ||
                  url.includes('.ogg') ||
                  url.includes('.flac') ||
-                 url.includes('/storage/') ||
+                 url.includes('.aac') ||
+                 url.includes('storage/') ||
                  url.includes('track_media') ||
-                 url.includes('/stream');
+                 url.includes('/stream') ||
+                 url.includes('/audio');
         }
         
-        // Hook into all audio elements - both existing and new
-        function hookAudioElement(audio) {
-          if (audio._sfHooked) return;
-          audio._sfHooked = true;
+        // The main hook function for audio elements
+        function interceptAudio(audio) {
+          if (audio._sfIntercepted) return;
+          audio._sfIntercepted = true;
           
-          console.log('[SF-Bridge] Hooking audio element');
+          console.log('[SF-Native] Intercepting audio element');
           
           // Store original methods
-          const origPlay = audio.play.bind(audio);
-          const origPause = audio.pause.bind(audio);
+          var origPlay = audio.play.bind(audio);
+          var origPause = audio.pause.bind(audio);
           
-          // Override play
+          // Get the current src
+          function getCurrentSrc() {
+            return audio.src || audio.currentSrc || audio.getAttribute('src') || '';
+          }
+          
+          // Override play method
           audio.play = function() {
-            const src = this.src || this.currentSrc;
-            console.log('[SF-Bridge] play() called, src=' + src);
+            var src = getCurrentSrc();
+            console.log('[SF-Native] play() - src: ' + src);
             
-            if (isAudioUrl(src)) {
-              window._sfNativeAudioActive = true;
-              window._sfCurrentSrc = src;
-              window._sfAudioElement = this;
+            if (isValidAudioUrl(src) && src !== window._sfBridge.currentSrc) {
+              window._sfBridge.active = true;
+              window._sfBridge.currentSrc = src;
+              window._sfBridge.audioElement = this;
               
-              // Mute web audio - native player handles sound
+              // MUTE the web audio - native player will handle sound
               this.muted = true;
               this.volume = 0;
               
-              // Tell native to play
-              sendToNative('play', src);
-              
-              // Still call original to keep UI state synced
-              return origPlay().catch(function(e) {
-                console.log('[SF-Bridge] Web play error (OK): ' + e.message);
-                return Promise.resolve();
-              });
+              // Send to native player
+              sendToFlutter('play', src);
+            } else if (window._sfBridge.active && src === window._sfBridge.currentSrc) {
+              // Resume existing track
+              sendToFlutter('resume', src);
             }
-            return origPlay();
+            
+            // Still call original to keep web player UI in sync
+            return origPlay().catch(function(e) {
+              console.log('[SF-Native] Web play suppressed (expected)');
+              return Promise.resolve();
+            });
           };
           
-          // Override pause
+          // Override pause method
           audio.pause = function() {
-            console.log('[SF-Bridge] pause() called');
-            if (window._sfNativeAudioActive && window._sfAudioElement === this) {
-              sendToNative('pause', '');
+            console.log('[SF-Native] pause()');
+            if (window._sfBridge.active) {
+              sendToFlutter('pause', '');
             }
             return origPause();
           };
           
-          // Watch for src attribute changes
-          const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
-          if (srcDescriptor) {
-            Object.defineProperty(audio, 'src', {
-              get: function() {
-                return srcDescriptor.get.call(this);
-              },
-              set: function(value) {
-                console.log('[SF-Bridge] src changed to: ' + value);
-                srcDescriptor.set.call(this, value);
-                if (isAudioUrl(value)) {
-                  window._sfCurrentSrc = value;
-                }
+          // Watch for src changes via property
+          var currentSrcValue = audio.src || '';
+          Object.defineProperty(audio, 'src', {
+            get: function() { return currentSrcValue; },
+            set: function(val) {
+              console.log('[SF-Native] src set: ' + val);
+              currentSrcValue = val;
+              audio.setAttribute('src', val);
+              
+              if (isValidAudioUrl(val)) {
+                window._sfBridge.currentSrc = val;
               }
-            });
-          }
+            },
+            configurable: true
+          });
           
-          // Listen for play/pause events as backup
-          audio.addEventListener('play', function() {
-            const src = this.src || this.currentSrc;
-            console.log('[SF-Bridge] play event, src=' + src);
-            if (isAudioUrl(src) && !window._sfNativeAudioActive) {
-              window._sfNativeAudioActive = true;
-              window._sfCurrentSrc = src;
-              window._sfAudioElement = this;
-              this.muted = true;
-              this.volume = 0;
-              sendToNative('play', src);
+          // Watch for currentTime changes (seeking)
+          audio.addEventListener('seeked', function() {
+            if (window._sfBridge.active) {
+              sendToFlutter('seek', String(this.currentTime));
             }
           });
           
-          audio.addEventListener('pause', function() {
-            console.log('[SF-Bridge] pause event');
-            if (window._sfNativeAudioActive && window._sfAudioElement === this) {
-              sendToNative('pause', '');
-            }
-          });
-          
+          // Watch for ended event
           audio.addEventListener('ended', function() {
-            console.log('[SF-Bridge] ended event');
-            if (window._sfNativeAudioActive) {
-              sendToNative('stop', '');
-              window._sfNativeAudioActive = false;
+            console.log('[SF-Native] Track ended');
+            if (window._sfBridge.active) {
+              sendToFlutter('ended', '');
+              window._sfBridge.active = false;
+              window._sfBridge.currentSrc = null;
             }
           });
+          
+          // If audio already has src, capture it
+          var existingSrc = getCurrentSrc();
+          if (isValidAudioUrl(existingSrc)) {
+            console.log('[SF-Native] Found existing src: ' + existingSrc);
+            window._sfBridge.currentSrc = existingSrc;
+          }
         }
         
         // Hook existing audio elements
-        document.querySelectorAll('audio').forEach(hookAudioElement);
+        document.querySelectorAll('audio').forEach(interceptAudio);
         
-        // Watch for dynamically created audio elements
-        const observer = new MutationObserver(function(mutations) {
+        // Watch for new audio elements (React creates them dynamically)
+        var observer = new MutationObserver(function(mutations) {
           mutations.forEach(function(mutation) {
             mutation.addedNodes.forEach(function(node) {
               if (node.nodeType === 1) {
                 if (node.tagName === 'AUDIO') {
-                  hookAudioElement(node);
+                  interceptAudio(node);
                 }
                 if (node.querySelectorAll) {
-                  node.querySelectorAll('audio').forEach(hookAudioElement);
+                  node.querySelectorAll('audio').forEach(interceptAudio);
                 }
               }
             });
+            
+            // Also check for attribute changes on audio elements
+            if (mutation.type === 'attributes' && mutation.target.tagName === 'AUDIO') {
+              var audio = mutation.target;
+              var src = audio.src || audio.currentSrc;
+              if (isValidAudioUrl(src) && src !== window._sfBridge.currentSrc) {
+                console.log('[SF-Native] Audio src attribute changed: ' + src);
+                window._sfBridge.currentSrc = src;
+              }
+            }
           });
         });
         
         observer.observe(document.documentElement, {
           childList: true,
-          subtree: true
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['src']
         });
         
-        // Also override Audio constructor for dynamically created audio
-        const OriginalAudio = window.Audio;
+        // Override Audio constructor
+        var OrigAudio = window.Audio;
         window.Audio = function(src) {
-          console.log('[SF-Bridge] new Audio(' + src + ')');
-          const audio = new OriginalAudio(src);
-          hookAudioElement(audio);
+          console.log('[SF-Native] new Audio(' + (src || '') + ')');
+          var audio = new OrigAudio(src);
+          interceptAudio(audio);
           return audio;
         };
-        window.Audio.prototype = OriginalAudio.prototype;
+        window.Audio.prototype = OrigAudio.prototype;
         
-        console.log('[SF-Bridge] Audio bridge v3 installed');
+        // Also intercept createElement for audio
+        var origCreateElement = document.createElement.bind(document);
+        document.createElement = function(tag) {
+          var el = origCreateElement(tag);
+          if (tag.toLowerCase() === 'audio') {
+            setTimeout(function() { interceptAudio(el); }, 0);
+          }
+          return el;
+        };
+        
+        console.log('[SF-Native] Audio Bridge v4 initialized - base URL: ' + window._sfBridge.baseUrl);
       })();
     ''');
   }
