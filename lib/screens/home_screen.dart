@@ -94,14 +94,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     
     switch (state) {
       case AppLifecycleState.paused:
-        debugPrint('App paused - keeping audio session active');
+        // App went to background - keep audio playing
+        debugPrint('App paused - keeping audio session active for background playback');
         AudioBackgroundService.activate();
+        // DO NOT pause the WebView - let audio continue
         break;
       case AppLifecycleState.resumed:
         debugPrint('App resumed');
         AudioBackgroundService.activate();
-        // Resume WebView
-        _webViewController?.resume();
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
