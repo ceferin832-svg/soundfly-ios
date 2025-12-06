@@ -10,43 +10,14 @@ import AVFoundation
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
     
-    // Configure AVAudioSession for background audio playback
-    configureAudioSession()
+    // Basic audio session setup - let just_audio handle the details
+    do {
+      try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+      try AVAudioSession.sharedInstance().setActive(true)
+    } catch {
+      print("Audio session error: \(error)")
+    }
     
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-  
-  private func configureAudioSession() {
-    do {
-      let audioSession = AVAudioSession.sharedInstance()
-      try audioSession.setCategory(
-        .playback,
-        mode: .default,
-        options: [.allowAirPlay, .allowBluetooth, .allowBluetoothA2DP]
-      )
-      try audioSession.setActive(true)
-      print("Audio session configured for background playback")
-    } catch {
-      print("Failed to configure audio session: \(error)")
-    }
-  }
-  
-  override func applicationDidEnterBackground(_ application: UIApplication) {
-    do {
-      try AVAudioSession.sharedInstance().setActive(true)
-      print("Keeping audio session active in background")
-    } catch {
-      print("Error keeping audio active: \(error)")
-    }
-    super.applicationDidEnterBackground(application)
-  }
-  
-  override func applicationWillEnterForeground(_ application: UIApplication) {
-    do {
-      try AVAudioSession.sharedInstance().setActive(true)
-    } catch {
-      print("Error reactivating audio: \(error)")
-    }
-    super.applicationWillEnterForeground(application)
   }
 }

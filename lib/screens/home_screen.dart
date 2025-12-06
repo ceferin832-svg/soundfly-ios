@@ -12,7 +12,6 @@ import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
 import '../services/admob_service.dart';
-import '../services/audio_background_service.dart';
 import '../services/native_audio_player.dart';
 import 'no_internet_screen.dart';
 
@@ -89,7 +88,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _initializeConnectivity();
     _enableWakelock();
-    AudioBackgroundService.initialize();
     NativeAudioPlayer.initialize();
   }
   
@@ -103,20 +101,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     
     switch (state) {
       case AppLifecycleState.paused:
-        // App went to background - try to keep audio playing
-        debugPrint('App paused - keeping audio session active for background playback');
-        AudioBackgroundService.activate();
-        // Inject JavaScript to try to keep audio alive
-        _keepAudioAlive();
+        // App went to background - just_audio_background handles background playback
+        debugPrint('App paused - native audio continues in background');
         break;
       case AppLifecycleState.resumed:
         debugPrint('App resumed');
-        AudioBackgroundService.activate();
         break;
       case AppLifecycleState.inactive:
-        // App is transitioning - activate audio session
-        AudioBackgroundService.activate();
-        break;
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
         break;
@@ -329,32 +320,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     },
                   );
                   
-                  // Add handler for background audio state
-                  controller.addJavaScriptHandler(
-                    handlerName: 'backgroundAudio',
-                    callback: (args) {
-                      if (args.isEmpty) return;
-                      final command = args[0] as String;
-                      
-                      debugPrint('Background Audio Command: $command');
-                      
-                      if (command == 'start') {
-                        // Activate audio session to allow background playback
-                        AudioBackgroundService.activate();
-                        // Play silent audio to keep audio session alive
-                        NativeAudioPlayer.playSilent();
-                      } else if (command == 'stop') {
-                        NativeAudioPlayer.stopSilent();
-                      }
-                    },
-                  );
+                  // NOTE: Background audio is now handled entirely by just_audio_background
+                  // No need for separate audio session management
                 },
                 onLoadStart: (controller, url) {
                   setState(() {
                     _isLoading = true;
                     _hasError = false;
                   });
-                  AudioBackgroundService.activate();
                   // Inject early
                   _injectAudioFixes(controller);
                 },
