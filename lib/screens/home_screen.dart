@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show min;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
@@ -217,14 +219,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     
     return true;
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _connectivitySubscription?.cancel();
-    WakelockPlus.disable();
-    super.dispose();
   }
 
   @override
@@ -497,9 +491,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {}); // Refresh UI
   }
   
-  /// Play YouTube audio using extraction service
+  /// Play YouTube audio using youtube_explode_dart (direct extraction)
   String? _currentYouTubeVideoId;
   bool _isExtracting = false;
+  final YoutubeExplode _ytExplode = YoutubeExplode();
   
   Future<void> _playYouTubeAudio(String videoId) async {
     if (videoId.isEmpty) return;
@@ -522,158 +517,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     
     _showSnackBar('Extracting audio...', Colors.orange);
     
-    String? audioUrl;
-    String? errorMsg;
-    
-    // Try Cobalt API first (most reliable in 2024-2025)
     try {
-      final cobaltInstances = [
-        'api.cobalt.tools',
-        'cobalt-api.kwiatekmiki.com',
-      ];
+      // Get stream manifest using youtube_explode_dart
+      final manifest = await _ytExplode.videos.streamsClient.getManifest(videoId);
       
-      for (final instance in cobaltInstances) {
-        if (audioUrl != null) break;
-        
-        try {
-          final url = 'https://$instance/api/json';
-          debugPrint('Trying Cobalt: $instance');
-          
-          final client = HttpClient();
-          client.connectionTimeout = const Duration(seconds: 10);
-          
-          final request = await client.postUrl(Uri.parse(url));
-          request.headers.set('Content-Type', 'application/json');
-          request.headers.set('Accept', 'application/json');
-          request.headers.set('User-Agent', 'Mozilla/5.0');
-          
-          // Cobalt API request body
-          final body = jsonEncode({
-            'url': 'https://www.youtube.com/watch?v=$videoId',
-            'isAudioOnly': true,
-            'aFormat': 'mp3',
-          });
-          request.write(body);
-          
-          final response = await request.close();
-          debugPrint('Cobalt $instance status: ${response.statusCode}');
-          
-          if (response.statusCode == 200) {
-            final responseBody = await response.transform(const Utf8Decoder()).join();
-            debugPrint('Cobalt response: ${responseBody.substring(0, min(200, responseBody.length))}');
-            
-            final json = jsonDecode(responseBody) as Map<String, dynamic>;
-            
-            if (json['status'] == 'stream' || json['status'] == 'redirect') {
-              audioUrl = json['url'] as String?;
-              debugPrint('Cobalt URL found!');
-            } else if (json['status'] == 'error') {
-              errorMsg = json['text'] as String?;
-              debugPrint('Cobalt error: $errorMsg');
-            }
-          }
-          client.close();
-        } catch (e) {
-          debugPrint('Cobalt $instance error: $e');
-        }
-      }
-    } catch (e) {
-      debugPrint('Cobalt extraction failed: $e');
-    }
-    
-    // Try YouTube direct HLS if Cobalt failed
-    if (audioUrl == null) {
-      try {
-        // Some videos have direct HLS streams
-        final hlsUrl = 'https://www.youtube.com/watch?v=$videoId';
-        debugPrint('Cobalt failed, trying alternative methods...');
-        
-        // Try y2mate API
-        try {
-          final y2mateUrl = 'https://api.vevioz.com/api/button/mp3/$videoId';
-          debugPrint('Trying Vevioz: $y2mateUrl');
-          
-          final client = HttpClient();
-          client.connectionTimeout = const Duration(seconds: 10);
-          
-          final request = await client.getUrl(Uri.parse(y2mateUrl));
-          request.headers.set('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)');
-          final response = await request.close();
-          
-          debugPrint('Vevioz status: ${response.statusCode}');
-          
-          if (response.statusCode == 200) {
-            final body = await response.transform(const Utf8Decoder()).join();
-            
-            // Look for download link in response
-            final regex = RegExp(r'href="(https://[^"]+\.mp3[^"]*)"');
-            final match = regex.firstMatch(body);
-            if (match != null) {
-              audioUrl = match.group(1);
-              debugPrint('Vevioz URL found!');
-            }
-          }
-          client.close();
-        } catch (e) {
-          debugPrint('Vevioz failed: $e');
-        }
-      } catch (e) {
-        debugPrint('Alternative extraction failed: $e');
-      }
-    }
-    
-    // Try one more: yt-dlp proxy service
-    if (audioUrl == null) {
-      try {
-        final proxyUrls = [
-          'https://yt.lemnoslife.com/noKey/videos?part=contentDetails&id=$videoId',
-        ];
-        
-        for (final proxyUrl in proxyUrls) {
-          if (audioUrl != null) break;
-          
-          debugPrint('Trying proxy: $proxyUrl');
-          
-          try {
-            final client = HttpClient();
-            client.connectionTimeout = const Duration(seconds: 8);
-            
-            final request = await client.getUrl(Uri.parse(proxyUrl));
-            request.headers.set('User-Agent', 'Mozilla/5.0');
-            final response = await request.close();
-            
-            debugPrint('Proxy status: ${response.statusCode}');
-            client.close();
-          } catch (e) {
-            debugPrint('Proxy failed: $e');
-          }
-        }
-      } catch (e) {
-        debugPrint('Proxy extraction failed: $e');
-      }
-    }
-    
-    _isExtracting = false;
-    
-    if (audioUrl != null && audioUrl.isNotEmpty) {
-      debugPrint('=== PLAYING AUDIO ===');
-      debugPrint('URL: ${audioUrl.substring(0, min(100, audioUrl.length))}...');
+      debugPrint('Got manifest! Audio streams: ${manifest.audioOnly.length}');
       
-      try {
+      // Get best quality audio stream
+      if (manifest.audioOnly.isNotEmpty) {
+        // Sort by bitrate and get highest quality
+        final audioStreams = manifest.audioOnly.toList()
+          ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
+        
+        final bestAudio = audioStreams.first;
+        final audioUrl = bestAudio.url.toString();
+        
+        debugPrint('Best audio: ${bestAudio.bitrate.kiloBitsPerSecond}kbps');
+        debugPrint('URL: ${audioUrl.substring(0, min(100, audioUrl.length))}...');
+        
+        _isExtracting = false;
+        
+        // Play with native player
         await NativeAudioPlayer.play(audioUrl);
         _showSnackBar('🎵 Background audio ready!', Colors.green);
         setState(() {});
-      } catch (e) {
-        debugPrint('Play error: $e');
-        _showSnackBar('Play failed: $e', Colors.red);
+      } else {
+        _isExtracting = false;
+        debugPrint('No audio streams found');
+        _showSnackBar('No audio streams found', Colors.red);
       }
-    } else {
-      debugPrint('No audio URL found');
-      _showSnackBar('Could not extract audio - APIs blocked', Colors.red);
+    } catch (e) {
+      _isExtracting = false;
+      debugPrint('YouTube extraction error: $e');
+      _showSnackBar('Extraction failed: ${e.toString().substring(0, min(50, e.toString().length))}', Colors.red);
     }
   }
   
-  int min(int a, int b) => a < b ? a : b;
+  @override
+  void dispose() {
+    _ytExplode.close();
+    WidgetsBinding.instance.removeObserver(this);
+    _connectivitySubscription?.cancel();
+    WakelockPlus.disable();
+    super.dispose();
+  }
 
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
     await controller.evaluateJavascript(source: '''
