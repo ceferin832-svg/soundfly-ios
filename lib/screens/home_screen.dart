@@ -523,92 +523,135 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     
     _showSnackBar('Extracting audio...', Colors.orange);
     
+    String? audioUrl;
+    
     try {
-      // Use Piped API to get audio stream
-      final pipedInstances = [
-        'pipedapi.kavin.rocks',
-        'pipedapi.adminforge.de', 
-        'api.piped.yt',
-        'pipedapi.moomoo.me',
+      // Try Invidious instances first (more reliable)
+      final invidiousInstances = [
+        'inv.nadeko.net',
+        'invidious.nerdvpn.de',
+        'invidious.jing.rocks',
+        'yewtu.be',
+        'vid.puffyan.us',
       ];
       
-      String? audioUrl;
-      
-      for (final instance in pipedInstances) {
+      for (final instance in invidiousInstances) {
+        if (audioUrl != null) break;
+        
         try {
-          final url = 'https://$instance/streams/$videoId';
-          debugPrint('Trying: $url');
+          final url = 'https://$instance/api/v1/videos/$videoId';
+          debugPrint('Trying Invidious: $url');
           
           final client = HttpClient();
-          client.connectionTimeout = const Duration(seconds: 10);
+          client.connectionTimeout = const Duration(seconds: 8);
           
           final request = await client.getUrl(Uri.parse(url));
-          request.headers.set('User-Agent', 'Mozilla/5.0');
+          request.headers.set('User-Agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)');
+          request.headers.set('Accept', 'application/json');
           final response = await request.close();
           
-          debugPrint('Response status: ${response.statusCode}');
+          debugPrint('Invidious $instance status: ${response.statusCode}');
           
           if (response.statusCode == 200) {
             final body = await response.transform(const Utf8Decoder()).join();
             final json = jsonDecode(body) as Map<String, dynamic>;
             
-            // Get audio streams
-            final audioStreams = json['audioStreams'] as List?;
-            debugPrint('Audio streams found: ${audioStreams?.length ?? 0}');
+            // Get adaptive formats (audio only)
+            final adaptiveFormats = json['adaptiveFormats'] as List?;
+            debugPrint('Adaptive formats: ${adaptiveFormats?.length ?? 0}');
             
-            if (audioStreams != null && audioStreams.isNotEmpty) {
-              // Find best quality m4a stream (iOS compatible)
-              for (final stream in audioStreams) {
-                final mimeType = (stream['mimeType'] as String?) ?? '';
-                final streamUrl = stream['url'] as String?;
-                final quality = stream['quality'] as String? ?? '';
+            if (adaptiveFormats != null) {
+              for (final format in adaptiveFormats) {
+                final type = (format['type'] as String?) ?? '';
+                final formatUrl = format['url'] as String?;
                 
-                debugPrint('Stream: $quality - $mimeType');
-                
-                if (streamUrl != null && (mimeType.contains('mp4') || mimeType.contains('m4a') || mimeType.contains('audio'))) {
-                  audioUrl = streamUrl;
-                  debugPrint('Selected stream: $quality');
+                // Look for audio formats (m4a, webm audio, mp4 audio)
+                if (formatUrl != null && type.startsWith('audio/')) {
+                  audioUrl = formatUrl;
+                  debugPrint('Found audio: $type');
                   break;
                 }
-              }
-              
-              // Fallback to first audio stream
-              if (audioUrl == null) {
-                audioUrl = audioStreams.first['url'] as String?;
-                debugPrint('Using first available stream');
               }
             }
             
             if (audioUrl != null) {
-              debugPrint('Got audio URL! Length: ${audioUrl.length}');
+              debugPrint('Got URL from Invidious $instance');
               client.close();
               break;
             }
           }
-          
           client.close();
         } catch (e) {
-          debugPrint('Instance $instance failed: $e');
+          debugPrint('Invidious $instance failed: $e');
         }
       }
       
-      _isExtracting = false;
-      
-      if (audioUrl != null && audioUrl.isNotEmpty) {
-        debugPrint('=== PLAYING AUDIO ===');
-        debugPrint('URL: ${audioUrl.substring(0, 100)}...');
+      // Fallback to Piped if Invidious failed
+      if (audioUrl == null) {
+        final pipedInstances = [
+          'pipedapi.kavin.rocks',
+          'pipedapi.adminforge.de',
+          'api.piped.yt',
+        ];
         
+        for (final instance in pipedInstances) {
+          if (audioUrl != null) break;
+          
+          try {
+            final url = 'https://$instance/streams/$videoId';
+            debugPrint('Trying Piped: $url');
+            
+            final client = HttpClient();
+            client.connectionTimeout = const Duration(seconds: 8);
+            
+            final request = await client.getUrl(Uri.parse(url));
+            request.headers.set('User-Agent', 'Mozilla/5.0');
+            final response = await request.close();
+            
+            if (response.statusCode == 200) {
+              final body = await response.transform(const Utf8Decoder()).join();
+              final json = jsonDecode(body) as Map<String, dynamic>;
+              
+              final audioStreams = json['audioStreams'] as List?;
+              if (audioStreams != null && audioStreams.isNotEmpty) {
+                for (final stream in audioStreams) {
+                  final mimeType = (stream['mimeType'] as String?) ?? '';
+                  final streamUrl = stream['url'] as String?;
+                  
+                  if (streamUrl != null && mimeType.contains('audio')) {
+                    audioUrl = streamUrl;
+                    break;
+                  }
+                }
+              }
+            }
+            client.close();
+          } catch (e) {
+            debugPrint('Piped $instance failed: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Extraction error: $e');
+    }
+    
+    _isExtracting = false;
+    
+    if (audioUrl != null && audioUrl.isNotEmpty) {
+      debugPrint('=== PLAYING AUDIO ===');
+      debugPrint('URL length: ${audioUrl.length}');
+      
+      try {
         await NativeAudioPlayer.play(audioUrl);
         _showSnackBar('🎵 Background audio ready!', Colors.green);
         setState(() {});
-      } else {
-        debugPrint('Failed to extract audio URL');
-        _showSnackBar('Could not extract audio', Colors.red);
+      } catch (e) {
+        debugPrint('Play error: $e');
+        _showSnackBar('Play failed: $e', Colors.red);
       }
-    } catch (e) {
-      _isExtracting = false;
-      debugPrint('Error extracting YouTube audio: $e');
-      _showSnackBar('Extraction failed: $e', Colors.red);
+    } else {
+      debugPrint('No audio URL found');
+      _showSnackBar('Could not extract audio', Colors.red);
     }
   }
 
