@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' show min;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:path_provider/path_provider.dart';
 import '../config/app_config.dart';
 import '../config/app_strings.dart';
 import '../config/app_theme.dart';
@@ -515,21 +517,54 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       
       // Get best quality audio stream
       if (manifest.audioOnly.isNotEmpty) {
-        // Sort by bitrate and get highest quality
+        // Sort by bitrate and get highest quality (prefer mp4/m4a for iOS compatibility)
         final audioStreams = manifest.audioOnly.toList()
           ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
         
         final bestAudio = audioStreams.first;
-        final audioUrl = bestAudio.url.toString();
         
-        debugPrint('Best audio: ${bestAudio.bitrate.kiloBitsPerSecond}kbps');
-        debugPrint('URL: ${audioUrl.substring(0, min(100, audioUrl.length))}...');
+        debugPrint('Best audio: ${bestAudio.bitrate.kiloBitsPerSecond}kbps, container: ${bestAudio.container.name}');
+        
+        _showSnackBar('Downloading for background play...', Colors.blue);
+        
+        // Download audio to local file for reliable background playback
+        final tempDir = await getTemporaryDirectory();
+        final audioFile = File('${tempDir.path}/yt_audio_$videoId.${bestAudio.container.name}');
+        
+        // Delete old file if exists
+        if (await audioFile.exists()) {
+          await audioFile.delete();
+        }
+        
+        // Download the audio stream
+        final audioStream = _ytExplode.videos.streamsClient.get(bestAudio);
+        final fileStream = audioFile.openWrite();
+        
+        int downloaded = 0;
+        final totalSize = bestAudio.size.totalBytes;
+        
+        await for (final chunk in audioStream) {
+          fileStream.add(chunk);
+          downloaded += chunk.length;
+          
+          // Show progress every 10%
+          final progress = (downloaded / totalSize * 100).round();
+          if (progress % 20 == 0) {
+            debugPrint('Download progress: $progress%');
+          }
+        }
+        
+        await fileStream.flush();
+        await fileStream.close();
+        
+        debugPrint('Audio downloaded to: ${audioFile.path}');
+        debugPrint('File size: ${await audioFile.length()} bytes');
         
         _isExtracting = false;
         
-        // Play with native player including metadata for lock screen
+        // Play from LOCAL file - this works in background!
         await NativeAudioPlayer.play(
-          audioUrl,
+          audioFile.path,
           title: _currentVideoTitle ?? 'Soundfly',
           artist: _currentVideoArtist ?? 'Unknown Artist',
           artworkUrl: _currentVideoThumbnail,

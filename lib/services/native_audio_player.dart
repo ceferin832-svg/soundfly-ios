@@ -19,8 +19,8 @@ class NativeAudioPlayer {
     debugPrint('NativeAudioPlayer initialized');
   }
   
-  /// Play audio from URL with optional metadata for lock screen
-  static Future<void> play(String url, {String? title, String? artist, String? artworkUrl}) async {
+  /// Play audio from URL or local file path with optional metadata for lock screen
+  static Future<void> play(String source, {String? title, String? artist, String? artworkUrl}) async {
     if (!_isInitialized) await initialize();
     
     try {
@@ -29,14 +29,23 @@ class NativeAudioPlayer {
       _currentArtist = artist ?? 'Unknown Artist';
       _currentArtwork = artworkUrl;
       
-      // Always reload for new URLs
-      _currentUrl = url;
+      // Always reload for new sources
+      _currentUrl = source;
+      
+      // Determine if source is a local file or URL
+      final bool isLocalFile = source.startsWith('/') || source.startsWith('file://');
+      final Uri sourceUri = isLocalFile 
+          ? Uri.file(source.replaceFirst('file://', ''))
+          : Uri.parse(source);
+      
+      debugPrint('NativeAudioPlayer: Source type = ${isLocalFile ? "LOCAL FILE" : "URL"}');
+      debugPrint('NativeAudioPlayer: URI = $sourceUri');
       
       // Use AudioSource with metadata for lock screen controls
       final audioSource = AudioSource.uri(
-        Uri.parse(url),
+        sourceUri,
         tag: MediaItem(
-          id: url,
+          id: source,
           title: _currentTitle!,
           artist: _currentArtist,
           artUri: _currentArtwork != null ? Uri.parse(_currentArtwork!) : null,
