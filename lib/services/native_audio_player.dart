@@ -6,8 +6,10 @@ import 'package:audio_session/audio_session.dart';
 /// This provides robust background audio support on iOS
 class NativeAudioPlayer {
   static final AudioPlayer _player = AudioPlayer();
+  static final AudioPlayer _silentPlayer = AudioPlayer();
   static String? _currentUrl;
   static bool _isInitialized = false;
+  static bool _silentPlaying = false;
   
   /// Initialize the audio player and audio session
   static Future<void> initialize() async {
@@ -142,9 +144,48 @@ class NativeAudioPlayer {
   /// Get the player instance for advanced usage
   static AudioPlayer get player => _player;
   
+  /// Play silent audio to keep audio session active for WebView background playback
+  static Future<void> playSilent() async {
+    if (!_isInitialized) await initialize();
+    if (_silentPlaying) return;
+    
+    try {
+      // Create a silent audio source - use a data URI with minimal silent audio
+      // This keeps the iOS audio session active so WebView audio continues
+      await _silentPlayer.setVolume(0.01); // Nearly silent
+      await _silentPlayer.setLoopMode(LoopMode.one); // Loop forever
+      
+      // Use a simple sine wave at very low volume
+      // This is a tiny MP3 that's essentially silence
+      const silentAudioUrl = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+xBkAA/wAABpAAAACAAADSAAAAEAAAGkAAAAIAAANIAAAAQAAANIAAAARMQU1FMy4xMDBVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+xBkLQ/wAABpAAAACAAADSAAAAEAAAGkAAAAIAAANIAAAARVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==';
+      
+      await _silentPlayer.setUrl(silentAudioUrl);
+      await _silentPlayer.play();
+      _silentPlaying = true;
+      
+      debugPrint('NativeAudioPlayer: Silent audio started to keep session alive');
+    } catch (e) {
+      debugPrint('Error playing silent audio: $e');
+    }
+  }
+  
+  /// Stop silent audio
+  static Future<void> stopSilent() async {
+    if (!_silentPlaying) return;
+    
+    try {
+      await _silentPlayer.stop();
+      _silentPlaying = false;
+      debugPrint('NativeAudioPlayer: Silent audio stopped');
+    } catch (e) {
+      debugPrint('Error stopping silent audio: $e');
+    }
+  }
+  
   /// Dispose player
   static Future<void> dispose() async {
     await _player.dispose();
+    await _silentPlayer.dispose();
     _isInitialized = false;
   }
 }

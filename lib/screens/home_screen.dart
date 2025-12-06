@@ -297,6 +297,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       }
                     },
                   );
+                  
+                  // Add handler for background audio state
+                  controller.addJavaScriptHandler(
+                    handlerName: 'backgroundAudio',
+                    callback: (args) {
+                      if (args.isEmpty) return;
+                      final command = args[0] as String;
+                      
+                      debugPrint('Background Audio Command: $command');
+                      
+                      if (command == 'start') {
+                        // Activate audio session to allow background playback
+                        AudioBackgroundService.activate();
+                        // Play silent audio to keep audio session alive
+                        NativeAudioPlayer.playSilent();
+                      } else if (command == 'stop') {
+                        NativeAudioPlayer.stopSilent();
+                      }
+                    },
+                  );
                 },
                 onLoadStart: (controller, url) {
                   setState(() {
@@ -418,18 +438,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
+    // Enable media playback in background for WebView
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('=== Soundfly Audio Bridge v7 - Complete Audio Interception ===');
+        console.log('=== Soundfly Audio Bridge v8 - Background WebView Audio ===');
         
-        // State tracking
+        // Keep audio session alive
         window._sfBridge = {
           active: false,
-          currentSrc: null,
-          baseUrl: window.location.origin
+          silentAudio: null,
+          keepAliveInterval: null
         };
         
-        // Show visual notification (for debugging)
+        // Show notification
         function showNotification(msg, isSuccess) {
           console.log('[SF-Native] ' + msg);
           var toast = document.createElement('div');
@@ -439,126 +460,120 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           setTimeout(function() { toast.remove(); }, 3000);
         }
         
-        // Send message to Flutter native player
-        function sendToFlutter(action, url) {
-          var fullUrl = url;
-          
-          // Convert relative URLs to absolute
-          if (url && !url.startsWith('http') && !url.startsWith('blob:')) {
-            fullUrl = window._sfBridge.baseUrl + '/' + url.replace(/^\\//, '');
+        // Create a silent audio context to keep iOS audio session active
+        function createSilentAudioKeepAlive() {
+          try {
+            var AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            
+            var ctx = new AudioContext();
+            
+            // Create silent oscillator
+            var oscillator = ctx.createOscillator();
+            var gainNode = ctx.createGain();
+            gainNode.gain.value = 0.001; // Nearly silent
+            oscillator.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            oscillator.start();
+            
+            window._sfBridge.audioContext = ctx;
+            console.log('[SF-Native] Silent audio context created');
+          } catch(e) {
+            console.log('[SF-Native] AudioContext error: ' + e);
           }
-          
-          console.log('[SF-Native] Sending: ' + action + ' -> ' + fullUrl);
-          
+        }
+        
+        // Notify Flutter to start background audio session
+        function notifyFlutterBackgroundAudio(isPlaying) {
           if (window.flutter_inappwebview) {
-            window.flutter_inappwebview.callHandler('nativeAudio', action, fullUrl || '');
+            window.flutter_inappwebview.callHandler('backgroundAudio', isPlaying ? 'start' : 'stop', '');
+          }
+        }
+        
+        // ========== YOUTUBE IFRAME DETECTION ==========
+        function detectYouTubePlayback() {
+          // Find YouTube iframes
+          var iframes = document.querySelectorAll('iframe[src*="youtube"]');
+          if (iframes.length > 0) {
+            console.log('[SF-Native] YouTube iframe found: ' + iframes.length);
             return true;
           }
           return false;
         }
         
-        // Check if URL is a playable audio file
-        function isPlayableAudioUrl(url) {
-          if (!url) return false;
-          if (url.startsWith('blob:') || url.startsWith('data:')) return false;
-          
-          var lowerUrl = url.toLowerCase();
-          return lowerUrl.includes('.mp3') || 
-                 lowerUrl.includes('.m4a') || 
-                 lowerUrl.includes('.wav') ||
-                 lowerUrl.includes('.ogg') ||
-                 lowerUrl.includes('.aac') ||
-                 lowerUrl.includes('.flac') ||
-                 lowerUrl.includes('storage/track_media') ||
-                 lowerUrl.includes('/stream');
+        // ========== MEDIA SESSION API ==========
+        // Use Media Session API to get better background support
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.setActionHandler('play', function() {
+            console.log('[SF-Native] Media Session: play');
+            notifyFlutterBackgroundAudio(true);
+          });
+          navigator.mediaSession.setActionHandler('pause', function() {
+            console.log('[SF-Native] Media Session: pause');
+            notifyFlutterBackgroundAudio(false);
+          });
         }
         
-        // ========== HTML AUDIO ELEMENT INTERCEPTION ==========
-        function interceptAudio(audio) {
-          if (audio._sfIntercepted) return;
-          audio._sfIntercepted = true;
+        // ========== VISIBILITY CHANGE DETECTION ==========
+        document.addEventListener('visibilitychange', function() {
+          console.log('[SF-Native] Visibility: ' + document.visibilityState);
           
-          console.log('[SF-Native] Audio element found');
-          
-          var origPlay = audio.play.bind(audio);
-          var origPause = audio.pause.bind(audio);
-          
-          // Watch for src changes
-          var srcDescriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
-          if (srcDescriptor && srcDescriptor.set) {
-            var origSrcSet = srcDescriptor.set;
-            Object.defineProperty(audio, 'src', {
-              set: function(val) {
-                console.log('[SF-Native] Audio src set: ' + val);
-                if (isPlayableAudioUrl(val)) {
-                  showNotification('🎵 Audio file: ' + val.substring(0, 40), true);
-                  window._sfBridge.pendingSrc = val;
-                }
-                return origSrcSet.call(this, val);
-              },
-              get: function() {
-                return srcDescriptor.get.call(this);
-              }
-            });
+          if (document.visibilityState === 'hidden') {
+            // App going to background
+            showNotification('App going to background...', false);
+            notifyFlutterBackgroundAudio(true);
+            
+            // Try to keep audio alive
+            if (window._sfBridge.audioContext) {
+              window._sfBridge.audioContext.resume();
+            }
+          } else {
+            // App coming to foreground
+            showNotification('App in foreground', true);
           }
-          
-          audio.play = function() {
-            var src = this.src || this.currentSrc || window._sfBridge.pendingSrc || '';
-            console.log('[SF-Native] audio.play() called, src: ' + src);
+        });
+        
+        // ========== AUDIO ELEMENT MONITORING ==========
+        function monitorAudioElements() {
+          var audios = document.querySelectorAll('audio, video');
+          audios.forEach(function(media) {
+            if (media._sfMonitored) return;
+            media._sfMonitored = true;
             
-            if (isPlayableAudioUrl(src)) {
-              showNotification('▶️ Playing via native: ' + src.substring(0, 35), true);
+            media.addEventListener('play', function() {
+              console.log('[SF-Native] Media playing: ' + (this.src || 'no src'));
               window._sfBridge.active = true;
-              window._sfBridge.currentSrc = src;
-              window._sfBridge.audioElement = this;
-              
-              // Mute web audio
-              this.muted = true;
-              this.volume = 0;
-              
-              // Send to native player
-              sendToFlutter('play', src);
-            } else {
-              showNotification('⚠️ Non-local audio: ' + (src ? src.substring(0, 30) : 'YouTube?'), false);
-            }
+              notifyFlutterBackgroundAudio(true);
+              showNotification('🎵 Audio playing', true);
+            });
             
-            return origPlay().catch(function(e) { return Promise.resolve(); });
-          };
-          
-          audio.pause = function() {
-            if (window._sfBridge.active) {
-              sendToFlutter('pause', '');
-            }
-            return origPause();
-          };
-          
-          audio.addEventListener('ended', function() {
-            if (window._sfBridge.active) {
-              sendToFlutter('ended', '');
+            media.addEventListener('pause', function() {
+              console.log('[SF-Native] Media paused');
+            });
+            
+            media.addEventListener('ended', function() {
+              console.log('[SF-Native] Media ended');
               window._sfBridge.active = false;
-            }
-          });
-          
-          audio.addEventListener('seeked', function() {
-            if (window._sfBridge.active) {
-              sendToFlutter('seek', String(this.currentTime));
-            }
+            });
           });
         }
         
-        // Intercept existing audio elements
-        document.querySelectorAll('audio').forEach(interceptAudio);
+        // Monitor periodically for new audio elements
+        setInterval(monitorAudioElements, 1000);
+        monitorAudioElements();
         
-        // Watch for new audio elements
+        // Watch for YouTube iframes
         var observer = new MutationObserver(function(mutations) {
           mutations.forEach(function(mutation) {
             mutation.addedNodes.forEach(function(node) {
               if (node.nodeType === 1) {
-                if (node.tagName === 'AUDIO') {
-                  interceptAudio(node);
+                if (node.tagName === 'IFRAME' && node.src && node.src.includes('youtube')) {
+                  console.log('[SF-Native] YouTube iframe added');
+                  showNotification('🎬 YouTube player loaded', false);
+                  notifyFlutterBackgroundAudio(true);
                 }
-                if (node.querySelectorAll) {
-                  node.querySelectorAll('audio').forEach(interceptAudio);
+                if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
+                  monitorAudioElements();
                 }
               }
             });
@@ -566,62 +581,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
         observer.observe(document.documentElement, { childList: true, subtree: true });
         
-        // Override Audio constructor
-        var OrigAudio = window.Audio;
-        window.Audio = function(src) {
-          console.log('[SF-Native] new Audio(' + src + ')');
-          if (isPlayableAudioUrl(src)) {
-            showNotification('🎵 new Audio: ' + src.substring(0, 40), true);
-          }
-          var audio = new OrigAudio(src);
-          interceptAudio(audio);
-          return audio;
-        };
-        window.Audio.prototype = OrigAudio.prototype;
-        
-        // ========== FETCH/XHR INTERCEPTION FOR AUDIO FILES ==========
-        var origFetch = window.fetch;
-        window.fetch = function(input, init) {
-          var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-          
-          if (isPlayableAudioUrl(url)) {
-            showNotification('📡 Fetch audio: ' + url.substring(0, 40), true);
-          }
-          
-          return origFetch.apply(this, arguments);
-        };
-        
-        var origXHROpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url) {
-          this._sfUrl = url;
-          
-          if (isPlayableAudioUrl(url)) {
-            showNotification('📡 XHR audio: ' + url.substring(0, 40), true);
-          }
-          
-          return origXHROpen.apply(this, arguments);
-        };
-        
-        // ========== DETECT YOUTUBE USAGE ==========
-        // Listen for YouTube iframe creation
-        var origCreateElement = document.createElement.bind(document);
-        document.createElement = function(tag) {
-          var el = origCreateElement(tag);
-          if (tag.toLowerCase() === 'iframe') {
-            var origSetAttribute = el.setAttribute.bind(el);
-            el.setAttribute = function(name, value) {
-              if (name === 'src' && value && value.includes('youtube')) {
-                showNotification('⚠️ YouTube detected - web only', false);
-                console.log('[SF-Native] YouTube iframe: ' + value);
-              }
-              return origSetAttribute(name, value);
-            };
-          }
-          return el;
-        };
-        
-        showNotification('Bridge v7 ready!', true);
-        console.log('[SF-Native] Audio Bridge v7 initialized');
+        // Initialize
+        createSilentAudioKeepAlive();
+        showNotification('Bridge v8 ready!', true);
+        console.log('[SF-Native] Audio Bridge v8 initialized');
       })();
     ''');
   }
