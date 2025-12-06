@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -298,6 +300,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     },
                   );
                   
+                  // Add handler for YouTube audio extraction and playback
+                  controller.addJavaScriptHandler(
+                    handlerName: 'youtubeAudio',
+                    callback: (args) async {
+                      if (args.isEmpty) return;
+                      final command = args[0] as String;
+                      final videoId = args.length > 1 ? args[1] as String : '';
+                      
+                      debugPrint('YouTube Audio Command: $command, VideoID: $videoId');
+                      
+                      switch (command) {
+                        case 'prepare':
+                        case 'play':
+                        case 'background':
+                          if (videoId.isNotEmpty) {
+                            // Extract and play YouTube audio via native player
+                            _playYouTubeAudio(videoId);
+                          }
+                          break;
+                        case 'pause':
+                          NativeAudioPlayer.pause();
+                          break;
+                        case 'ended':
+                          NativeAudioPlayer.stop();
+                          break;
+                        case 'foreground':
+                          // When app comes back, we could stop native and let WebView play
+                          // But for now, keep native playing for consistency
+                          break;
+                      }
+                    },
+                  );
+                  
                   // Add handler for background audio state
                   controller.addJavaScriptHandler(
                     handlerName: 'backgroundAudio',
@@ -436,155 +471,278 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     setState(() {}); // Refresh UI
   }
+  
+  /// Play YouTube audio using extraction service
+  String? _currentYouTubeVideoId;
+  
+  Future<void> _playYouTubeAudio(String videoId) async {
+    if (videoId.isEmpty) return;
+    
+    // Don't re-extract if same video
+    if (videoId == _currentYouTubeVideoId && NativeAudioPlayer.isPlaying) {
+      debugPrint('Already playing this video: $videoId');
+      return;
+    }
+    
+    _currentYouTubeVideoId = videoId;
+    debugPrint('Extracting audio for YouTube video: $videoId');
+    
+    try {
+      // Use Piped API (privacy-friendly YouTube frontend) to get audio stream
+      // This is a public API that extracts YouTube audio URLs
+      final pipedInstances = [
+        'pipedapi.kavin.rocks',
+        'pipedapi.adminforge.de', 
+        'api.piped.yt',
+      ];
+      
+      String? audioUrl;
+      
+      for (final instance in pipedInstances) {
+        try {
+          final uri = Uri.parse('https://$instance/streams/$videoId');
+          debugPrint('Trying Piped instance: $instance');
+          
+          final response = await HttpClient().getUrl(uri).then((req) => req.close());
+          
+          if (response.statusCode == 200) {
+            final body = await response.transform(const Utf8Decoder()).join();
+            final json = jsonDecode(body) as Map<String, dynamic>;
+            
+            // Get audio streams
+            final audioStreams = json['audioStreams'] as List?;
+            if (audioStreams != null && audioStreams.isNotEmpty) {
+              // Find best quality audio stream (prefer m4a/mp4 for iOS compatibility)
+              for (final stream in audioStreams) {
+                final mimeType = stream['mimeType'] as String? ?? '';
+                final url = stream['url'] as String?;
+                
+                if (url != null && (mimeType.contains('mp4') || mimeType.contains('m4a'))) {
+                  audioUrl = url;
+                  debugPrint('Found audio stream: $mimeType');
+                  break;
+                }
+              }
+              
+              // If no m4a, use first audio stream
+              if (audioUrl == null && audioStreams.isNotEmpty) {
+                audioUrl = audioStreams.first['url'] as String?;
+              }
+            }
+            
+            if (audioUrl != null) {
+              debugPrint('Got audio URL from $instance');
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('Piped instance $instance failed: $e');
+        }
+      }
+      
+      if (audioUrl != null) {
+        // Play the extracted audio
+        await NativeAudioPlayer.play(audioUrl);
+        _showSnackBar('🎵 Playing in background mode', Colors.green);
+        setState(() {});
+      } else {
+        debugPrint('Could not extract audio URL for video: $videoId');
+        _showSnackBar('Could not extract audio', Colors.red);
+      }
+    } catch (e) {
+      debugPrint('Error extracting YouTube audio: $e');
+      _showSnackBar('Audio extraction failed', Colors.red);
+    }
+  }
 
   Future<void> _injectAudioFixes(InAppWebViewController controller) async {
-    // Enable media playback in background for WebView
     await controller.evaluateJavascript(source: '''
       (function() {
-        console.log('=== Soundfly Audio Bridge v8 - Background WebView Audio ===');
+        console.log('=== Soundfly Audio Bridge v9 - YouTube Audio Extraction ===');
         
-        // Keep audio session alive
         window._sfBridge = {
           active: false,
-          silentAudio: null,
-          keepAliveInterval: null
+          currentVideoId: null,
+          lastVideoId: null
         };
         
         // Show notification
         function showNotification(msg, isSuccess) {
           console.log('[SF-Native] ' + msg);
           var toast = document.createElement('div');
-          toast.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:' + (isSuccess ? '#0a0' : '#333') + ';color:#fff;padding:8px 16px;border-radius:20px;z-index:99999;font-size:11px;max-width:90%;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.3);';
+          toast.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:' + (isSuccess ? '#0a0' : '#f80') + ';color:#fff;padding:10px 20px;border-radius:20px;z-index:99999;font-size:12px;max-width:90%;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.5);font-weight:bold;';
           toast.textContent = msg;
           document.body.appendChild(toast);
-          setTimeout(function() { toast.remove(); }, 3000);
+          setTimeout(function() { toast.remove(); }, 4000);
         }
         
-        // Create a silent audio context to keep iOS audio session active
-        function createSilentAudioKeepAlive() {
-          try {
-            var AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContext) return;
-            
-            var ctx = new AudioContext();
-            
-            // Create silent oscillator
-            var oscillator = ctx.createOscillator();
-            var gainNode = ctx.createGain();
-            gainNode.gain.value = 0.001; // Nearly silent
-            oscillator.connect(gainNode);
-            gainNode.connect(ctx.destination);
-            oscillator.start();
-            
-            window._sfBridge.audioContext = ctx;
-            console.log('[SF-Native] Silent audio context created');
-          } catch(e) {
-            console.log('[SF-Native] AudioContext error: ' + e);
-          }
-        }
-        
-        // Notify Flutter to start background audio session
-        function notifyFlutterBackgroundAudio(isPlaying) {
+        // Send YouTube video ID to Flutter for native playback
+        function sendYouTubeToFlutter(videoId, action) {
+          if (!videoId) return;
+          console.log('[SF-Native] Sending YouTube: ' + action + ' -> ' + videoId);
+          
           if (window.flutter_inappwebview) {
-            window.flutter_inappwebview.callHandler('backgroundAudio', isPlaying ? 'start' : 'stop', '');
+            window.flutter_inappwebview.callHandler('youtubeAudio', action, videoId);
           }
         }
         
-        // ========== YOUTUBE IFRAME DETECTION ==========
-        function detectYouTubePlayback() {
-          // Find YouTube iframes
-          var iframes = document.querySelectorAll('iframe[src*="youtube"]');
-          if (iframes.length > 0) {
-            console.log('[SF-Native] YouTube iframe found: ' + iframes.length);
-            return true;
+        // Extract video ID from various YouTube URL formats
+        function extractVideoId(url) {
+          if (!url) return null;
+          
+          // youtube.com/watch?v=VIDEO_ID
+          var match = url.match(/[?&]v=([^&]+)/);
+          if (match) return match[1];
+          
+          // youtu.be/VIDEO_ID
+          match = url.match(/youtu\\.be\\/([^?&]+)/);
+          if (match) return match[1];
+          
+          // youtube.com/embed/VIDEO_ID
+          match = url.match(/\\/embed\\/([^?&]+)/);
+          if (match) return match[1];
+          
+          // Just the ID (11 chars)
+          if (/^[a-zA-Z0-9_-]{11}\$/.test(url)) return url;
+          
+          return null;
+        }
+        
+        // ========== INTERCEPT XHR TO CATCH YOUTUBE SEARCH RESULTS ==========
+        var origXHROpen = XMLHttpRequest.prototype.open;
+        var origXHRSend = XMLHttpRequest.prototype.send;
+        
+        XMLHttpRequest.prototype.open = function(method, url) {
+          this._sfUrl = url;
+          return origXHROpen.apply(this, arguments);
+        };
+        
+        XMLHttpRequest.prototype.send = function(body) {
+          var xhr = this;
+          var url = this._sfUrl || '';
+          
+          // Intercept search/audio API responses to get YouTube video IDs
+          if (url.includes('/search/audio') || url.includes('api/v1/search')) {
+            xhr.addEventListener('load', function() {
+              try {
+                var response = JSON.parse(xhr.responseText);
+                if (response.results && response.results.length > 0) {
+                  var videoId = response.results[0].id;
+                  console.log('[SF-Native] YouTube video ID from API: ' + videoId);
+                  showNotification('🎬 YouTube ID: ' + videoId, true);
+                  
+                  window._sfBridge.currentVideoId = videoId;
+                  
+                  // Send to Flutter to prepare native playback
+                  sendYouTubeToFlutter(videoId, 'prepare');
+                }
+              } catch(e) {
+                console.log('[SF-Native] XHR parse error: ' + e);
+              }
+            });
           }
-          return false;
-        }
+          
+          return origXHRSend.apply(this, arguments);
+        };
         
-        // ========== MEDIA SESSION API ==========
-        // Use Media Session API to get better background support
-        if ('mediaSession' in navigator) {
-          navigator.mediaSession.setActionHandler('play', function() {
-            console.log('[SF-Native] Media Session: play');
-            notifyFlutterBackgroundAudio(true);
-          });
-          navigator.mediaSession.setActionHandler('pause', function() {
-            console.log('[SF-Native] Media Session: pause');
-            notifyFlutterBackgroundAudio(false);
-          });
-        }
+        // ========== INTERCEPT YOUTUBE IFRAME ==========
+        var origCreateElement = document.createElement.bind(document);
+        document.createElement = function(tag) {
+          var el = origCreateElement(tag);
+          
+          if (tag.toLowerCase() === 'iframe') {
+            // Watch for src changes on iframes
+            var origSetAttr = el.setAttribute.bind(el);
+            el.setAttribute = function(name, value) {
+              if (name === 'src' && value && value.includes('youtube')) {
+                var videoId = extractVideoId(value);
+                if (videoId) {
+                  console.log('[SF-Native] YouTube iframe src: ' + videoId);
+                  window._sfBridge.currentVideoId = videoId;
+                }
+              }
+              return origSetAttr(name, value);
+            };
+            
+            // Also watch the src property
+            var srcDescriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+            if (srcDescriptor) {
+              Object.defineProperty(el, 'src', {
+                set: function(value) {
+                  if (value && value.includes('youtube')) {
+                    var videoId = extractVideoId(value);
+                    if (videoId) {
+                      console.log('[SF-Native] YouTube iframe src property: ' + videoId);
+                      window._sfBridge.currentVideoId = videoId;
+                    }
+                  }
+                  srcDescriptor.set.call(this, value);
+                },
+                get: function() {
+                  return srcDescriptor.get.call(this);
+                }
+              });
+            }
+          }
+          return el;
+        };
         
-        // ========== VISIBILITY CHANGE DETECTION ==========
+        // ========== DETECT PLAYBACK STATE VIA POSTMESSAGE ==========
+        window.addEventListener('message', function(event) {
+          try {
+            var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+            
+            // YouTube iframe API messages
+            if (data && data.event === 'onStateChange') {
+              var state = data.info;
+              console.log('[SF-Native] YouTube state: ' + state);
+              
+              // States: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
+              if (state === 1 && window._sfBridge.currentVideoId) {
+                // YouTube started playing - tell Flutter to take over
+                if (window._sfBridge.currentVideoId !== window._sfBridge.lastVideoId) {
+                  window._sfBridge.lastVideoId = window._sfBridge.currentVideoId;
+                  showNotification('▶️ Starting native player...', true);
+                  sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'play');
+                }
+              } else if (state === 2) {
+                sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'pause');
+              } else if (state === 0) {
+                sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'ended');
+              }
+            }
+            
+            // Also check for infoDelivery with video data
+            if (data && data.event === 'infoDelivery' && data.info) {
+              if (data.info.videoData && data.info.videoData.video_id) {
+                var videoId = data.info.videoData.video_id;
+                if (videoId !== window._sfBridge.currentVideoId) {
+                  console.log('[SF-Native] Video ID from infoDelivery: ' + videoId);
+                  window._sfBridge.currentVideoId = videoId;
+                }
+              }
+            }
+          } catch(e) {}
+        });
+        
+        // ========== VISIBILITY CHANGE - TRIGGER NATIVE PLAYBACK ==========
         document.addEventListener('visibilitychange', function() {
           console.log('[SF-Native] Visibility: ' + document.visibilityState);
           
           if (document.visibilityState === 'hidden') {
-            // App going to background
-            showNotification('App going to background...', false);
-            notifyFlutterBackgroundAudio(true);
-            
-            // Try to keep audio alive
-            if (window._sfBridge.audioContext) {
-              window._sfBridge.audioContext.resume();
+            // App going to background - native player should take over
+            if (window._sfBridge.currentVideoId) {
+              showNotification('⏳ Switching to native player...', true);
+              sendYouTubeToFlutter(window._sfBridge.currentVideoId, 'background');
             }
-          } else {
-            // App coming to foreground
-            showNotification('App in foreground', true);
+          } else if (document.visibilityState === 'visible') {
+            // App back in foreground
+            sendYouTubeToFlutter(window._sfBridge.currentVideoId || '', 'foreground');
           }
         });
         
-        // ========== AUDIO ELEMENT MONITORING ==========
-        function monitorAudioElements() {
-          var audios = document.querySelectorAll('audio, video');
-          audios.forEach(function(media) {
-            if (media._sfMonitored) return;
-            media._sfMonitored = true;
-            
-            media.addEventListener('play', function() {
-              console.log('[SF-Native] Media playing: ' + (this.src || 'no src'));
-              window._sfBridge.active = true;
-              notifyFlutterBackgroundAudio(true);
-              showNotification('🎵 Audio playing', true);
-            });
-            
-            media.addEventListener('pause', function() {
-              console.log('[SF-Native] Media paused');
-            });
-            
-            media.addEventListener('ended', function() {
-              console.log('[SF-Native] Media ended');
-              window._sfBridge.active = false;
-            });
-          });
-        }
-        
-        // Monitor periodically for new audio elements
-        setInterval(monitorAudioElements, 1000);
-        monitorAudioElements();
-        
-        // Watch for YouTube iframes
-        var observer = new MutationObserver(function(mutations) {
-          mutations.forEach(function(mutation) {
-            mutation.addedNodes.forEach(function(node) {
-              if (node.nodeType === 1) {
-                if (node.tagName === 'IFRAME' && node.src && node.src.includes('youtube')) {
-                  console.log('[SF-Native] YouTube iframe added');
-                  showNotification('🎬 YouTube player loaded', false);
-                  notifyFlutterBackgroundAudio(true);
-                }
-                if (node.tagName === 'AUDIO' || node.tagName === 'VIDEO') {
-                  monitorAudioElements();
-                }
-              }
-            });
-          });
-        });
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-        
-        // Initialize
-        createSilentAudioKeepAlive();
-        showNotification('Bridge v8 ready!', true);
-        console.log('[SF-Native] Audio Bridge v8 initialized');
+        showNotification('Bridge v9 ready!', true);
+        console.log('[SF-Native] Audio Bridge v9 initialized');
       })();
     ''');
   }
