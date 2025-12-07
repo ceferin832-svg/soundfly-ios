@@ -1,7 +1,7 @@
 name: soundfly_ios
 description: Soundfly Music Streaming App for iOS - A Flutter WebView application that connects to your Soundfly web backend.
 publish_to: 'none'
-version: 15.0.0+14036
+version: 15.0.0+14037
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
