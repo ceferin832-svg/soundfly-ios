@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'package:audio_session/audio_session.dart';
 
 /// Native Audio Player Service using just_audio
 /// This provides robust background audio support on iOS
@@ -11,12 +12,39 @@ class NativeAudioPlayer {
   static String? _currentArtist;
   static String? _currentArtwork;
   static bool _isInitialized = false;
+  static AudioSession? _audioSession;
   
-  /// Initialize the audio player (no audio session config - JustAudioBackground handles it)
+  /// Initialize the audio player with proper audio session for background
   static Future<void> initialize() async {
     if (_isInitialized) return;
-    _isInitialized = true;
-    debugPrint('NativeAudioPlayer initialized');
+    
+    try {
+      // Get and configure audio session for background playback
+      _audioSession = await AudioSession.instance;
+      await _audioSession!.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionMode: AVAudioSessionMode.defaultMode,
+        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.music,
+          usage: AndroidAudioUsage.media,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: false,
+      ));
+      
+      // Activate the session
+      await _audioSession!.setActive(true);
+      debugPrint('NativeAudioPlayer: Audio session configured and activated');
+      
+      _isInitialized = true;
+      debugPrint('NativeAudioPlayer initialized with background support');
+    } catch (e) {
+      debugPrint('Error initializing audio session: $e');
+      _isInitialized = true;
+    }
   }
   
   /// Play audio from URL or local file path with optional metadata for lock screen
@@ -24,6 +52,12 @@ class NativeAudioPlayer {
     if (!_isInitialized) await initialize();
     
     try {
+      // CRITICAL: Ensure audio session is active before playing
+      if (_audioSession != null) {
+        await _audioSession!.setActive(true);
+        debugPrint('NativeAudioPlayer: Audio session activated');
+      }
+      
       // Store metadata
       _currentTitle = title ?? 'Soundfly';
       _currentArtist = artist ?? 'Unknown Artist';
