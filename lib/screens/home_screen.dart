@@ -531,52 +531,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         
         _isExtracting = false;
         
-        // Play the audio
-        _showSnackBar('Starting playback...', Colors.blue);
-        
-        await NativeAudioPlayer.play(
-          audioUrl,
-          title: _currentVideoTitle ?? 'Soundfly Music',
-          artist: _currentVideoArtist ?? 'Unknown Artist',
-        );
-        
-        // Wait for playback to stabilize
-        await Future.delayed(const Duration(seconds: 2));
-        
-        if (NativeAudioPlayer.isPlaying) {
-          _showSnackBar('🎵 Cobalt: Playing! Test background now', Colors.green);
-        } else {
-          _showSnackBar('⚠️ Playback may have issues', Colors.orange);
-      final audioUrl = await _cobaltService.getAudioUrl(youtubeUrl);
-      if (audioUrl != null) {
-        // Use min with explicit int type
-        debugPrint('Cobalt returned audio URL: ${audioUrl.substring(0, min<int>(100, audioUrl.length))}...');
-        _isExtracting = false;
-        // Play the audio
-        _showSnackBar('Starting playback...', Colors.blue);
-        await NativeAudioPlayer.play(
-          audioUrl,
-          title: _currentVideoTitle ?? 'Soundfly Music',
-          artist: _currentVideoArtist ?? 'Unknown Artist',
-        );
-        // Wait for playback to stabilize
-        await Future.delayed(const Duration(seconds: 2));
-        if (NativeAudioPlayer.isPlaying) {
-          _showSnackBar('🎵 Cobalt: Playing! Test background now', Colors.green);
-        } else {
-          _showSnackBar('⚠️ Playback may have issues', Colors.orange);
+        try {
+          // Build YouTube URL from video ID
+          final youtubeUrl = 'https://www.youtube.com/watch?v=$videoId';
+          // Use Cobalt to get audio URL
+          final audioUrl = await _cobaltService.getAudioUrl(youtubeUrl);
+          if (audioUrl != null) {
+            debugPrint('Cobalt returned audio URL: ${audioUrl.substring(0, min<int>(100, audioUrl.length))}...');
+            _isExtracting = false;
+            // Play the audio
+            _showSnackBar('Starting playback...', Colors.blue);
+            await NativeAudioPlayer.play(
+              audioUrl,
+              title: _currentVideoTitle ?? 'Soundfly Music',
+              artist: _currentVideoArtist ?? 'Unknown Artist',
+            );
+            // Wait for playback to stabilize
+            await Future.delayed(const Duration(seconds: 2));
+            if (NativeAudioPlayer.isPlaying) {
+              _showSnackBar('🎵 Cobalt: Playing! Test background now', Colors.green);
+            } else {
+              _showSnackBar('⚠️ Playback may have issues', Colors.orange);
+            }
+            setState(() {});
+          } else {
+            _isExtracting = false;
+            debugPrint('Cobalt returned null - no audio URL');
+            _showSnackBar('Cobalt: Could not extract audio', Colors.red);
+          }
+        } catch (e) {
+          _isExtracting = false;
+          debugPrint('Cobalt extraction error: $e');
+          _showSnackBar('Cobalt failed: ${e.toString().substring(0, min<int>(50, e.toString().length))}', Colors.red);
         }
-        setState(() {});
-      } else {
-        _isExtracting = false;
-        debugPrint('Cobalt returned null - no audio URL');
-        _showSnackBar('Cobalt: Could not extract audio', Colors.red);
-      }
-        }
-        setState(() {});
-      } else {
-        _isExtracting = false;
-        debugPrint('Cobalt returned null - no audio URL');
         _showSnackBar('Cobalt: Could not extract audio', Colors.red);
       }
     } catch (e) {
