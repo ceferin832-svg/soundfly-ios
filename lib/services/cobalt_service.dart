@@ -17,7 +17,6 @@ class CobaltService {
   static String? _workingInstance;
   static bool _isExtracting = false;
   
-  /// Extract audio URL from a YouTube video ID
   /// Returns the direct audio URL or null if extraction fails
   static Future<String?> extractAudioUrl(String videoId) async {
     if (_isExtracting) {
@@ -49,6 +48,33 @@ class CobaltService {
       }
     }
     
+    _isExtracting = false;
+    debugPrint('[Cobalt] All instances failed');
+    return null;
+  }
+  /// Instance method for compatibility with home_screen.dart
+  Future<String?> getAudioUrl(String youtubeUrl) async {
+    if (_isExtracting) {
+      debugPrint('[Cobalt] Already extracting, skipping');
+      return null;
+    }
+    _isExtracting = true;
+    final instancesToTry = _workingInstance != null 
+        ? [_workingInstance!, ..._apiInstances.where((i) => i != _workingInstance)]
+        : _apiInstances;
+    for (final instance in instancesToTry) {
+      try {
+        final result = await _tryExtract(instance, youtubeUrl);
+        if (result != null) {
+          _workingInstance = instance;
+          _isExtracting = false;
+          debugPrint('[Cobalt] 	 Success with $instance');
+          return result;
+        }
+      } catch (e) {
+        debugPrint('[Cobalt]  Failed with $instance: $e');
+      }
+    }
     _isExtracting = false;
     debugPrint('[Cobalt] All instances failed');
     return null;
