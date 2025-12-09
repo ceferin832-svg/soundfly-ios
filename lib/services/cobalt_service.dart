@@ -5,13 +5,10 @@ import 'package:flutter/foundation.dart';
 /// Service to extract audio URLs from YouTube using Cobalt API
 /// Cobalt is a free, open-source media downloader
 class CobaltService {
-  // List of public Cobalt API instances to try
-  // These are community-hosted instances
+  // List of public Cobalt API instances to try (no JWT required)
+  // Updated 2025: Many instances now require JWT auth, these are verified working
   static const List<String> _apiInstances = [
-    'https://api.cobalt.tools',
-    'https://cobalt-api.hyper.lol',
-    'https://cobalt.api.timelessnesses.me',
-    'https://api.co.wukko.me',
+    'https://cobalt-api.kwiatekmiki.com',  // Verified working without JWT
   ];
   
   static String? _workingInstance;
