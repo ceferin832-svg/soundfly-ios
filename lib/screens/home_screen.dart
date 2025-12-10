@@ -396,100 +396,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // Error view
               if (_hasError && !_isLoading)
                 _buildErrorView(),
-              
-              // DEBUG: Native audio status indicator and test buttons
-              Positioned(
-                bottom: 100,
-                right: 16,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Status indicator
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: NativeAudioPlayer.isPlaying ? Colors.green : Colors.grey,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        NativeAudioPlayer.isPlaying ? '🎵 Playing' : '⏸️ Stopped',
-                        style: const TextStyle(color: Colors.white, fontSize: 10),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Test YouTube extraction button (RED)
-                    FloatingActionButton.small(
-                      heroTag: 'testYouTube',
-                      backgroundColor: Colors.red,
-                      onPressed: _testYouTubeExtraction,
-                      child: const Icon(Icons.play_arrow, color: Colors.white),
-                    ),
-                    const SizedBox(height: 8),
-                    // Test MP3 button (PURPLE) - SoundHelix
-                    FloatingActionButton.small(
-                      heroTag: 'testAudio',
-                      backgroundColor: Colors.purple,
-                      onPressed: _testNativeAudio,
-                      child: const Icon(Icons.music_note, color: Colors.white),
-                    ),
-                    const SizedBox(height: 8),
-                    // Test another URL (BLUE) - Internet Archive
-                    FloatingActionButton.small(
-                      heroTag: 'testArchive',
-                      backgroundColor: Colors.blue,
-                      onPressed: _testAnotherAudio,
-                      child: const Icon(Icons.cloud, color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
             ],
           ),
         ),
       ),
     );
-  }
-  
-  /// Test YouTube extraction with a known video ID
-  Future<void> _testYouTubeExtraction() async {
-    // Use a popular music video ID for testing
-    const testVideoId = 'dQw4w9WgXcQ'; // Never Gonna Give You Up
-    
-    _showSnackBar('Testing YouTube extraction: $testVideoId', Colors.orange);
-    await _playYouTubeAudio(testVideoId);
-  }
-  
-  /// Test native audio player with a sample MP3
-  Future<void> _testNativeAudio() async {
-    // Using a public domain audio file for testing
-    const testUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
-    
-    if (NativeAudioPlayer.isPlaying) {
-      await NativeAudioPlayer.pause();
-      _showSnackBar('Native audio paused', Colors.orange);
-    } else {
-      await NativeAudioPlayer.play(
-        testUrl,
-        title: 'SoundHelix Song 1',
-        artist: 'SoundHelix Test',
-      );
-      _showSnackBar('Playing test audio - minimize app to test background!', Colors.green);
-    }
-    setState(() {}); // Refresh UI
-  }
-  
-  /// Test with another public audio URL (Internet Archive)
-  Future<void> _testAnotherAudio() async {
-    // Public domain audio from Internet Archive
-    const testUrl = 'https://archive.org/download/testmp3testfile/mpthreetest.mp3';
-    
-    await NativeAudioPlayer.play(
-      testUrl,
-      title: 'Archive Test',
-      artist: 'Internet Archive',
-    );
-    _showSnackBar('Playing Archive audio - test background!', Colors.blue);
-    setState(() {});
   }
   
   /// Play YouTube audio using Cobalt API (free service)
@@ -515,10 +426,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _isExtracting = true;
     _currentYouTubeVideoId = videoId;
     
-    debugPrint('=== EXTRACTING YOUTUBE AUDIO VIA COBALT ===');
+    debugPrint('=== EXTRACTING YOUTUBE AUDIO ===');
     debugPrint('Video ID: $videoId');
     
-    _showSnackBar('Extracting audio via Cobalt...', Colors.orange);
+    _showSnackBar('🎵 Preparando audio...', Colors.orange);
     
     try {
       // Build YouTube URL from video ID
@@ -527,38 +438,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final audioUrl = await _cobaltService.getAudioUrl(youtubeUrl);
       
       if (audioUrl != null) {
-        final urlPreview = audioUrl.length > 100 ? audioUrl.substring(0, 100) : audioUrl;
-        debugPrint('Cobalt returned audio URL: $urlPreview...');
+        debugPrint('Got audio URL, starting playback...');
         _isExtracting = false;
         
-        // Play the audio
-        _showSnackBar('Starting playback...', Colors.blue);
+        // Play the audio with native player
         await NativeAudioPlayer.play(
           audioUrl,
           title: _currentVideoTitle ?? 'Soundfly Music',
           artist: _currentVideoArtist ?? 'Unknown Artist',
         );
         
-        // Wait for playback to stabilize
-        await Future.delayed(const Duration(seconds: 2));
+        // Brief wait for playback to start
+        await Future.delayed(const Duration(milliseconds: 500));
         
         if (NativeAudioPlayer.isPlaying) {
-          _showSnackBar('🎵 Cobalt: Playing! Test background now', Colors.green);
-        } else {
-          _showSnackBar('⚠️ Playback may have issues', Colors.orange);
+          _showSnackBar('🎵 Reproduciendo', Colors.green);
         }
         setState(() {});
       } else {
         _isExtracting = false;
-        debugPrint('Cobalt returned null - no audio URL');
-        _showSnackBar('Cobalt: Could not extract audio', Colors.red);
+        debugPrint('Could not get audio URL');
+        _showSnackBar('⚠️ Error al extraer audio', Colors.red);
       }
     } catch (e) {
       _isExtracting = false;
-      final errorMsg = e.toString();
-      final errorPreview = errorMsg.length > 50 ? errorMsg.substring(0, 50) : errorMsg;
-      debugPrint('Cobalt extraction error: $e');
-      _showSnackBar('Cobalt failed: $errorPreview', Colors.red);
+      debugPrint('Extraction error: $e');
+      _showSnackBar('⚠️ Error de extracción', Colors.red);
     }
   }
   
