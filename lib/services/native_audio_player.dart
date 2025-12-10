@@ -23,9 +23,9 @@ class NativeAudioPlayer {
       _audioSession = await AudioSession.instance;
       await _audioSession!.configure(const AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.mixWithOthers,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
         avAudioSessionMode: AVAudioSessionMode.defaultMode,
-        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionRouteSharingPolicy: AVAudioSessionRouteSharingPolicy.longFormAudio,
         avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.notifyOthersOnDeactivation,
         androidAudioAttributes: AndroidAudioAttributes(
           contentType: AndroidAudioContentType.music,
@@ -122,18 +122,21 @@ class NativeAudioPlayer {
       debugPrint('NativeAudioPlayer: Setting audio source...');
       await _player.setAudioSource(audioSource, preload: true);
       
-      // Wait for buffering before starting playback
-      await Future.delayed(const Duration(milliseconds: 300));
+      // Wait for buffer to fill before starting playback
+      await Future.delayed(const Duration(seconds: 1));
       
       debugPrint('NativeAudioPlayer: Starting playback...');
       await _player.play();
       
-      // Wait for playback to stabilize
-      await Future.delayed(const Duration(milliseconds: 500));
+      // Wait for playback to fully stabilize - critical for background
+      await Future.delayed(const Duration(seconds: 1));
+      
+      // Reactivate audio session to ensure iOS knows we're playing
+      if (_audioSession != null) {
+        await _audioSession!.setActive(true);
+      }
       
       debugPrint('NativeAudioPlayer: Playing = ${_player.playing}, state = ${_player.playerState.processingState}');
-    } catch (e) {
-      debugPrint('Error playing audio: $e');
     } catch (e) {
       debugPrint('Error playing audio: $e');
       rethrow;

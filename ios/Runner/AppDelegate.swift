@@ -13,7 +13,7 @@ import AVFoundation
     // Configure audio session for background playback
     do {
       let audioSession = AVAudioSession.sharedInstance()
-      try audioSession.setCategory(.playback, mode: .default, options: [])
+      try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers])
       try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
       print("✅ Audio session configured for background playback")
     } catch {
