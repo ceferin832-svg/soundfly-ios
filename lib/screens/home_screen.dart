@@ -535,12 +535,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             };
             console.log('[SF-Bridge] Track info:', trackInfo.artist, '-', trackInfo.name);
             
-            // Get the first YouTube video ID from results
+            // Get the first result from API
             if (data && data.results && Array.isArray(data.results) && data.results.length > 0) {
               var firstResult = data.results[0];
+              
+              // Check if backend provides direct audio_url (preferred)
+              if (firstResult && firstResult.audio_url) {
+                console.log('[SF-Bridge] Backend provided audio_url!');
+                showNotification('🎵 Reproduciendo: ' + (trackInfo.name || firstResult.title), '#0a0');
+                
+                // Send audio URL directly to Flutter for native playback
+                if (window.flutter_inappwebview) {
+                  window.flutter_inappwebview.callHandler('nativeAudio', 'play', firstResult.audio_url, trackInfo.name, trackInfo.artist);
+                }
+                return true;
+              }
+              
+              // Fallback: Use video ID and let Flutter extract via Cobalt
               if (firstResult && firstResult.id) {
                 var videoId = firstResult.id;
-                console.log('[SF-Bridge] Found YouTube ID: ' + videoId + ' (title: ' + firstResult.title + ')');
+                console.log('[SF-Bridge] Using video ID fallback: ' + videoId);
                 playYouTubeNatively(videoId, trackInfo);
                 return true;
               }
